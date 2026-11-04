@@ -1,0 +1,4 @@
+# Default reviewers. Replace with the team once S6 confirms it.
+*                         @sarvesh-belose
+/docs/adr/                @sarvesh-belose
+/src/main/resources/db/   @sarvesh-belose

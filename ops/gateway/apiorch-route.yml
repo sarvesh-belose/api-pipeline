@@ -1,0 +1,11 @@
+# Proposed platform change (US-1.4, Sprint 0 S4) for parasdshah/workflow-user-stories:
+#   api-gateway/src/main/resources/application.yml -> spring.cloud.gateway.routes
+# Insert between the `hrms-service` route and the `workflow-service` `/api/**` catch-all.
+# List position decides (all routes have the default order): after the catch-all it is never reached.
+# GatewayRouteContractTest (US-1.4) parses this file.
+- id: apiorch-service
+  uri: lb://apiorch-service
+  predicates:
+    - Path=/api/apiorch/**
+  filters:
+    - RewritePath=/api/apiorch/(?<segment>.*), /api/$\{segment}

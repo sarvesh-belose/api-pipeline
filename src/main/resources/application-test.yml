@@ -1,0 +1,9 @@
+# Fast test tier: H2 in SQL Server mode. `slow` tests replace the datasource with SQL Server (@ServiceConnection).
+spring:
+  datasource:
+    url: jdbc:h2:mem:apiorch-test;MODE=MSSQLServer;DATABASE_TO_UPPER=FALSE;CASE_INSENSITIVE_IDENTIFIERS=TRUE;DB_CLOSE_DELAY=-1
+    username: sa
+    password: ""
+    hikari.maximum-pool-size: 10
+management:
+  server.port: 0   # random, so parallel CI jobs don't collide
