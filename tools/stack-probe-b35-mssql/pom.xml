@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  G1-revised stack probe (ADR-003): Spring Boot 3.5.14 + Spring Cloud 2025.0.3, SQL Server in production,
+  H2 in MSSQL mode for the fast tier. Evidence tool, not product code; see tools/README.md.
+  Fast tier:  mvn verify            (H2 MSSQL mode only)
+  Slow tier:  mvn verify -Pslow     (adds Testcontainers SQL Server 2022; needs Docker)
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>3.5.14</version>
+    <relativePath/>
+  </parent>
+  <groupId>com.crisil.apiorch.tools</groupId>
+  <artifactId>apiorch-stack-probe-b35-mssql</artifactId>
+  <version>0.0.1</version>
+  <properties>
+    <java.version>17</java.version>
+    <spring-cloud.version>2025.0.3</spring-cloud.version>
+    <springdoc.version>2.8.17</springdoc.version>
+    <logstash-encoder.version>8.1</logstash-encoder.version>
+    <resilience4j.version>2.4.0</resilience4j.version>
+    <shedlock.version>6.10.0</shedlock.version>
+    <jsonata.version>0.9.10</jsonata.version>
+    <wiremock.version>3.13.2</wiremock.version>
+    <archunit.version>1.5.1</archunit.version>
+    <jacoco.version>0.8.16</jacoco.version>
+    <it.excludedGroups>slow</it.excludedGroups>
+    <it.groups></it.groups>
+  </properties>
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>org.springframework.cloud</groupId>
+        <artifactId>spring-cloud-dependencies</artifactId>
+        <version>${spring-cloud.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+  <dependencies>
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-web</artifactId></dependency>
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-validation</artifactId></dependency>
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-actuator</artifactId></dependency>
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-data-jpa</artifactId></dependency>
+    <dependency><groupId>org.flywaydb</groupId><artifactId>flyway-core</artifactId></dependency>
+    <dependency><groupId>org.flywaydb</groupId><artifactId>flyway-sqlserver</artifactId></dependency>
+    <dependency><groupId>com.microsoft.sqlserver</groupId><artifactId>mssql-jdbc</artifactId><scope>runtime</scope></dependency>
+    <dependency><groupId>com.h2database</groupId><artifactId>h2</artifactId><scope>runtime</scope></dependency>
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-security</artifactId></dependency>
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-oauth2-resource-server</artifactId></dependency>
+    <dependency><groupId>org.springframework.cloud</groupId><artifactId>spring-cloud-starter-netflix-eureka-client</artifactId></dependency>
+    <dependency><groupId>org.springdoc</groupId><artifactId>springdoc-openapi-starter-webmvc-ui</artifactId><version>${springdoc.version}</version></dependency>
+    <dependency><groupId>net.logstash.logback</groupId><artifactId>logstash-logback-encoder</artifactId><version>${logstash-encoder.version}</version></dependency>
+    <dependency><groupId>io.github.resilience4j</groupId><artifactId>resilience4j-circuitbreaker</artifactId><version>${resilience4j.version}</version></dependency>
+    <dependency><groupId>io.github.resilience4j</groupId><artifactId>resilience4j-retry</artifactId><version>${resilience4j.version}</version></dependency>
+    <dependency><groupId>io.github.resilience4j</groupId><artifactId>resilience4j-bulkhead</artifactId><version>${resilience4j.version}</version></dependency>
+    <dependency><groupId>io.github.resilience4j</groupId><artifactId>resilience4j-micrometer</artifactId><version>${resilience4j.version}</version></dependency>
+    <dependency><groupId>io.micrometer</groupId><artifactId>micrometer-registry-prometheus</artifactId></dependency>
+    <dependency><groupId>net.javacrumbs.shedlock</groupId><artifactId>shedlock-spring</artifactId><version>${shedlock.version}</version></dependency>
+    <dependency><groupId>net.javacrumbs.shedlock</groupId><artifactId>shedlock-provider-jdbc-template</artifactId><version>${shedlock.version}</version></dependency>
+    <dependency><groupId>com.dashjoin</groupId><artifactId>jsonata</artifactId><version>${jsonata.version}</version></dependency>
+
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-test</artifactId><scope>test</scope></dependency>
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-testcontainers</artifactId><scope>test</scope></dependency>
+    <dependency><groupId>org.testcontainers</groupId><artifactId>mssqlserver</artifactId><scope>test</scope></dependency>
+    <dependency><groupId>org.testcontainers</groupId><artifactId>junit-jupiter</artifactId><scope>test</scope></dependency>
+    <dependency><groupId>org.wiremock</groupId><artifactId>wiremock-standalone</artifactId><version>${wiremock.version}</version><scope>test</scope></dependency>
+    <dependency><groupId>com.tngtech.archunit</groupId><artifactId>archunit-junit5</artifactId><version>${archunit.version}</version><scope>test</scope></dependency>
+    <dependency><groupId>org.awaitility</groupId><artifactId>awaitility</artifactId><scope>test</scope></dependency>
+  </dependencies>
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.jacoco</groupId><artifactId>jacoco-maven-plugin</artifactId><version>${jacoco.version}</version>
+        <executions>
+          <execution><id>agent</id><goals><goal>prepare-agent</goal></goals></execution>
+          <execution><id>report</id><phase>verify</phase><goals><goal>report</goal></goals></execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId><artifactId>maven-failsafe-plugin</artifactId>
+        <configuration>
+          <excludedGroups>${it.excludedGroups}</excludedGroups>
+          <groups>${it.groups}</groups>
+        </configuration>
+        <executions><execution><goals><goal>integration-test</goal><goal>verify</goal></goals></execution></executions>
+      </plugin>
+    </plugins>
+  </build>
+  <profiles>
+    <profile>
+      <id>slow</id>
+      <properties>
+        <it.excludedGroups></it.excludedGroups>
+        <it.groups></it.groups>
+      </properties>
+    </profile>
+  </profiles>
+</project>

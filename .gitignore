@@ -1,0 +1,6 @@
+target/
+.claude/settings.local.json
+*.log
+.idea/
+*.iml
+.vscode/

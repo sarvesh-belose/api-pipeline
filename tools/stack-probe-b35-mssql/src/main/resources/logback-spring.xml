@@ -1,0 +1,16 @@
+<configuration>
+  <!-- LogstashEncoder 8.1 (Jackson 2) with the masking decorator from US-7.3 (pre-9 element name) -->
+  <appender name="JSON" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+      <jsonGeneratorDecorator class="net.logstash.logback.mask.MaskingJsonGeneratorDecorator">
+        <defaultMask>***</defaultMask>
+        <path>password</path>
+        <value>(?&lt;=[?&amp;]t=)[^&amp;\s]+</value>
+        <value>(?i)(?&lt;=\b(password|secret|token|otp|pin)=)[^\s\x2C\x7D]+</value>
+        <!-- 8.1 config truncates <value> at a bare comma or "}": write them as \x2C and \x7D -->
+
+      </jsonGeneratorDecorator>
+    </encoder>
+  </appender>
+  <root level="WARN"><appender-ref ref="JSON"/></root>
+</configuration>
