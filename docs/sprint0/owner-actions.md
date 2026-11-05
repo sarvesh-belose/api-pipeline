@@ -20,7 +20,7 @@ git push origin main
 Both builds must pass before the merge. A second developer reviews the branch first
 (README §13 Definition of Done).
 
-- [ ] `verify` green · [ ] `verify -Pslow` green · [ ] merged into `main` (commit: ____)
+- [x] `verify` green (9/9) · [x] `verify -Pslow` green (12/12) · [x] merged into `main` (commit: `cc7a7e3`, 2026-11-05)
 
 ## 2. Raise the DBA ticket (S3)
 
