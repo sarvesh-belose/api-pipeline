@@ -1,7 +1,12 @@
 # S6: Re-estimate, team and review checkpoints (Sprint 0 review pack)
 
-**Status:** **held 2026-11-05.** Proposed estimates agreed, 4 developers, Sprint 1 starts Mon 16 Nov 2026,
-review dates accepted (outcome in §5). Names in §3 are still to be filled in.
+**Status:** **held 2026-11-05.** Proposed estimates agreed, 4 developers, sprint calendar and review
+dates accepted (outcome in §5). Names in §3 are still to be filled in.
+
+> **Dates are illustrative.** Every calendar date in this plan (sprint calendar, gantt, review
+> checkpoints) is for documentation only and does not drive execution. Work starts when it is
+> picked up; sprint numbers give the order, not the timing.
+
 **Inputs:** [R1 plan](../R1-implementation-plan.md) §2 (effort), §5 (workstreams), §8 (reviews),
 §11 (team size); the story map in [user-stories/README.md](../../user-stories/README.md) §2.
 
@@ -58,8 +63,7 @@ The plan holds at 4 developers if poker lands within about +18 dev-days of the p
 Beyond that, apply R1 plan §11 (≈ 1 extra sprint per 28 dev-days) or trim US-3.4 / US-8.1 A with
 the Business Owner (risk R8).
 
-**Calendar note:** with Sprint 0 starting 9 Nov 2026, Sprint 3 runs over 14–25 Dec and Sprint 4
-over 28 Dec–8 Jan. Agree leave plans now; a week of one developer's leave costs ≈ 3.5 dev-days.
+**Leave:** a week of one developer's leave costs ≈ 3.5 dev-days of the slack, whenever it falls.
 
 ## 3. Team confirmation
 
@@ -76,7 +80,8 @@ over 28 Dec–8 Jan. Agree leave plans now; a week of one developer's leave cost
 
 ## 4. Architecture review checkpoints (plan §8), proposed dates
 
-Dates assume Sprint 0 on 9–13 Nov 2026 and 2-week sprints after it. Shift them to the real start.
+The dates are illustrative only. They assume Sprint 0 on 9–13 Nov 2026 and 2-week sprints after it;
+what matters is the sprint position in the "Review" order.
 
 | Review | Proposed date | Entry condition | Attendees |
 |---|---|---|---|
@@ -94,7 +99,7 @@ Recorded 2026-11-05 by Sarvesh Belose.
   slack ≈ 18 dev-days (risk R8 trigger unchanged).
 - **Team size confirmed: 4 developers**, plus the shared QA/SDET and part-time DevOps (plan §5).
   **Gap:** names for each role in §3 are not yet assigned.
-- **Sprint 1 starts Mon 16 Nov 2026**, so the sprints run S1 16–27 Nov, S2 30 Nov–11 Dec,
+- **Illustrative sprint calendar** (documentation only): S1 16–27 Nov, S2 30 Nov–11 Dec,
   S3 14–25 Dec, S4 28 Dec–8 Jan, S5 11–22 Jan, S6 25 Jan–5 Feb 2027.
-- **Review dates accepted** as in §4: 26 Nov, 18 Dec, 11 Jan and 4 Feb.
-- **Leave:** not yet collected for the Dec–Jan sprints (calendar note in §2).
+- **Review checkpoints accepted** by sprint position as in §4 (end of S1, mid S3, start of S5, end
+  of S6); the dates there are illustrative.

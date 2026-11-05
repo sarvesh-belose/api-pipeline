@@ -4,6 +4,10 @@
 [user-stories/README.md](../user-stories/README.md). Story IDs, sizes and dependencies below come
 from its §2 story map. Where this plan overlaps work for speed, it says so explicitly.
 
+> **Dates are illustrative.** Every calendar date in this plan (sprint calendar, gantt, review
+> checkpoints) is for documentation only and does not drive execution. Work starts when it is
+> picked up; sprint numbers give the order, not the timing.
+
 ---
 
 ## 1. Scope
@@ -74,7 +78,7 @@ lives outside the team.
 | S3 | ~~Dev SQL Server database and DBA ticket~~ **Changed 2026-11-05 (owner direction): there is no DBA team until production.** Development and every test use SQL Server 2022 through Testcontainers (`./mvnw verify -Pslow`), and the Flyway `sqlserver/` migrations create the roles and grants there (US-7.1). The DBA request became story [US-8.5](../user-stories/E8-enablement/US-8.5-production-database-handover.md) (R2): provisioning and verification scripts plus an operations guide, handed to the DBA team at the move to production | US-8.5 written | Tech lead | **Done 2026-11-05.** The draft ticket `docs/sprint0/S3-dba-request.md` was removed; its content is in US-8.5 |
 | S4 | ~~Raise the platform gateway route PR~~ **Dropped 2026-11-05 (owner direction).** apiorch is independent and uses no shared API gateway or service registry. US-1.4 now publishes apiorch on each environment's own load balancer (stable public address, forwarded headers, callback-URL guard), which is Sprint 2 story work with no external dependency | — | — | The S4 draft and `ops/gateway/apiorch-route.yml` were removed |
 | S5 | Walking skeleton: `pom.xml`, app boots, `MigrationIT` stub, one Testcontainers IT | Merged skeleton | Platform dev | Unblocks all four workstreams on day 1 of Sprint 1. US-1.1's full ACs finish in Sprint 1 **Update 2026-11-04: built** on branch `sprint0/walking-skeleton`. It includes `pom.xml`, `mvnw`, the `local`/`test`/`prod` profiles, the baseline and H2-shim migrations, `MigrationIT` (H2) + `MigrationSqlServerIT` (`slow`), `ApplicationSmokeIT`, a skeleton `ArchUnitRulesTest`, and both JaCoCo gates. `verify`: 9/9 tests; `verify -Pslow`: 12/12. The local profile boots, with readiness `UP` on 9091. **Update 2026-11-05: merged into `main`** (merge commit `cc7a7e3`) after `verify` 9/9 and `verify -Pslow` 12/12 on a developer machine. |
-| S6 | Re-estimate (§2), confirm the team, agree on the architecture review checkpoints (§8) | Updated sprint plan | Whole team | **Update 2026-11-05:** review pack in [`docs/sprint0/S6-re-estimate.md`](sprint0/S6-re-estimate.md): proposed ≈ 134.5 story dev-days (≈ 18 slack at 4 developers), team table and proposed review dates. Not yet held. **Update 2026-11-05: held.** Proposed estimates agreed (≈ 134.5 story dev-days, demand ≈ 150 vs capacity 168, no plan change), 4 developers, Sprint 1 starts Mon 16 Nov 2026, review dates accepted. Still open: names per role and Dec–Jan leave. |
+| S6 | Re-estimate (§2), confirm the team, agree on the architecture review checkpoints (§8) | Updated sprint plan | Whole team | **Update 2026-11-05:** review pack in [`docs/sprint0/S6-re-estimate.md`](sprint0/S6-re-estimate.md): proposed ≈ 134.5 story dev-days (≈ 18 slack at 4 developers), team table and proposed review dates. Not yet held. **Update 2026-11-05: held.** Proposed estimates agreed (≈ 134.5 story dev-days, demand ≈ 150 vs capacity 168, no plan change), 4 developers, sprint calendar and review dates accepted as illustrative only. Still open: names per role. |
 
 **Sprint 0 exit** (changed 2026-11-05): ADR-003 (superseding ADR-001) and ADR-002 accepted, both test tiers green on
 the skeleton on a developer machine and the skeleton merged into `main`, and the production database
@@ -181,7 +185,7 @@ gantt
   regression, perf smoke             :d5, after d4, 10d
 ```
 *The gantt is in working days (weekends excluded). Each bar's length is its share of the sprint
-table above. The dates are illustrative: Sprint 0 is assumed to start Monday 9 Nov 2026, so shift
+table above. The dates are illustrative only (see the note at the top): Sprint 0 is assumed to start Monday 9 Nov 2026, so shift
 them to the real start date.*
 
 ## 7. Cross-cutting enablers (in Sprint 1, so the four tracks don't block each other)
