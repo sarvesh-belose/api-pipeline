@@ -79,7 +79,7 @@ class PipelineCompilerTest {
         ((ObjectNode) doc.withArray("steps").get(2)).put("path", "/x/{ $match(input.a, /ab+/) }");
         ((ObjectNode) doc.withArray("steps").get(3)).put("path", "/x/{unclosed");
         assertThatThrownBy(() -> compile(doc)).isInstanceOfSatisfying(PipelineCompiler.CompileException.class, e -> {
-            assertThat(e.issues()).extracting(DefinitionIssue::pointer).containsExactly(
+            assertThat(e.issues()).extracting(DefinitionIssue::path).containsExactly(
                     "/definition/steps/1/body", "/definition/steps/2/path", "/definition/steps/3/path");
             assertThat(e.issues()).extracting(DefinitionIssue::code).containsExactly(
                     "EXPRESSION_INVALID", "REGEX_NOT_ALLOWED", "PATH_INVALID");

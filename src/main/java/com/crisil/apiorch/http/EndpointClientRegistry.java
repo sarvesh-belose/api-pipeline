@@ -43,14 +43,17 @@ public class EndpointClientRegistry {
     private final RestClient.Builder restClientBuilder;
     private final SecretResolver secrets;
     private final OAuth2TokenCache tokens;
+    private final long maxResponseBytes;
 
     public EndpointClientRegistry(EndpointRepository repository, EndpointMapper mapper,
-            RestClient.Builder restClientBuilder, SecretResolver secrets, OAuth2TokenCache tokens) {
+            RestClient.Builder restClientBuilder, SecretResolver secrets, OAuth2TokenCache tokens,
+            com.crisil.apiorch.config.ApiorchProperties properties) {
         this.repository = repository;
         this.mapper = mapper;
         this.restClientBuilder = restClientBuilder;
         this.secrets = secrets;
         this.tokens = tokens;
+        this.maxResponseBytes = properties.run().maxResponseBytes();
     }
 
     /** The current runtime, loading it on first use. Empty if the endpoint does not exist. */
@@ -111,7 +114,9 @@ public class EndpointClientRegistry {
                 .build();
         JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(httpClient);
         factory.setReadTimeout(Duration.ofMillis(config.readTimeoutMs()));
-        RestClient.Builder builder = restClientBuilder.clone().requestFactory(factory);
+        // the exchange recorder is outermost, so it sees only the final exchange after any auth retry (US-7.2)
+        RestClient.Builder builder = restClientBuilder.clone().requestFactory(factory)
+                .requestInterceptor(new ExchangeRecorder(maxResponseBytes));
         if (config.authType() != AuthType.NONE) {
             builder.requestInterceptor(new AuthInterceptor(config.name(), config.auth(), secrets, tokens));
         }

@@ -55,7 +55,7 @@ public final class PipelineCompiler {
             } catch (ExpressionException e) {
                 String code = e.kind() == ExpressionException.Kind.NOT_ALLOWED && e.code() != null
                         ? e.code() : "EXPRESSION_INVALID";
-                issues.add(new DefinitionIssue(code, pointer, e.getMessage()
+                issues.add(DefinitionIssue.error(code, null, pointer, e.getMessage()
                         + (e.position() >= 0 ? " (at " + e.position() + ")" : "")));
                 return null;
             }
@@ -79,7 +79,7 @@ public final class PipelineCompiler {
             try {
                 return PathTemplate.parse(path);
             } catch (IllegalArgumentException e) {
-                issues.add(new DefinitionIssue("PATH_INVALID", pointer, e.getMessage()));
+                issues.add(DefinitionIssue.error("PATH_INVALID", null, pointer, e.getMessage()));
                 return null;
             }
         }

@@ -11,3 +11,5 @@ apiorch:
   endpoints:
     allow-http: true
     allowed-hosts: [localhost, "*.example.com"]
+  run:
+    allow-version-override: true

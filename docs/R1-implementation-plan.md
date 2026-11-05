@@ -205,6 +205,20 @@ them to the real start date.*
 **Deviation:** endpoint and draft APIs have no role checks yet, and the actor is `anonymous`, until
 US-1.2 (Sprint 2).
 
+**Sprint 2 status (2026-11-05): done** on `sprint2/*` branches; both tiers green (`verify -Pslow`, 301 tests).
+
+| Planned | Delivered | Left for later sprints |
+|---|---|---|
+| US-1.2 → US-1.4 | JWT resource server with the role matrix, callback and actuator chains, dev mode only in `local`; forwarded headers from trusted proxies, public-URL guard, actuator 404 on the API port | Load balancer checklist (US-1.4 AC1, AC3, AC6, AC7) in the deployment guide |
+| Finish US-3.1 → US-3.2 → start US-3.3 | US-3.2 complete, with `GuardedJsonataEvaluator` (ADR-002 D1–D6) and the deny-by-default reference scanner | US-3.3 publish (Sprint 3); the D3 audit of other built-ins and `BuiltinAbuseIT` |
+| Finish US-7.1 → US-4.1 | US-4.1 complete on fixture definitions and the stub executor: sync and async start, pinned version, input checks, owned run creation, notifier with shared poll, 200 callers on 10 Tomcat threads; JDBC lease service | Real step calls (US-4.3); `RUN_ACCEPTED`/`RUN_STARTED` now emitted, so US-7.1 AC1 is covered |
+| Finish US-2.2 → US-7.2 groundwork | `ExchangeRecorder` (outermost, counting tee) and `AttemptWriter` | Wiring attempts into the HTTP executor (US-4.3/US-7.2), masking (US-7.3) |
+
+**Deviation:** `RunCoordinator`, `RunService` and the row access live in `run` and `persistence`, not
+`engine`, because the US-1.1 rule keeps `engine` free of JDBC; `engine` holds the pure decisions
+(`RunDecision`, `RunContext`). Until US-4.3 the production step executor fails every step with
+`STEP_EXECUTOR_UNAVAILABLE`.
+
 ## 7. Cross-cutting enablers (in Sprint 1, so the four tracks don't block each other)
 
 1. **Schema-ahead.** Write `V2__endpoint` through `V7__run_exchange` in Sprint 1, straight from

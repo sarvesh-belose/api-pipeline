@@ -19,6 +19,9 @@ spring:
 server:
   port: 8080
   shutdown: graceful
+  # US-1.4: links (Location, callback URLs) use the load balancer's scheme and host, trusted only from these proxies
+  forward-headers-strategy: native
+  tomcat.remoteip.internal-proxies: ${APIORCH_TRUSTED_PROXIES:10\.\d+\.\d+\.\d+}
 
 management:
   server.port: 9091

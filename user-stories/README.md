@@ -603,7 +603,7 @@ US-5.x and US-6.x.
 | `apiorch.callback.expected-public-host` | — (startup guard outside `local`) | US-1.4 |
 | `apiorch.security.mode` | `jwt` (`dev` is allowed only when `local` is active) | US-1.2 |
 | `apiorch.security.roles-claim` / `apiorch.security.principal-claim` | `roles` / `sub` | US-1.2 |
-| `apiorch.security.metrics-allowed-cidrs` | `10.0.0.0/8,127.0.0.1/32` | US-1.2 |
+| `apiorch.security.metrics-allowed-cidrs` | `10.0.0.0/8,127.0.0.1/32,::1/128` | US-1.2 |
 | `apiorch.correlation.header` | `X-Correlation-Id` | US-1.3 |
 | `apiorch.endpoints.allow-http` | `false` (`true` in `local`) | US-2.1 |
 | `apiorch.endpoints.allowed-hosts` | `[]` (exact or `*.suffix`; required for any endpoint base URL or token URL) | US-2.1, US-2.2 |

@@ -1,14 +1,22 @@
 package com.crisil.apiorch.definition;
 
 import java.util.List;
+import java.util.Set;
 
 /**
- * The semantic verdict on a structurally valid definition (US-3.1 AC4, US-3.2). Non-blocking when a draft is
- * saved; blocking at validate and publish.
+ * The verdict on a definition (US-3.2): errors block validate and publish, warnings never do. The execution plan
+ * is the list of topological levels, each ordered by list position; it is empty when the graph itself is invalid.
+ * {@code postCompletion} names steps that run only after a non-blocking async step's callback (US-6.3).
  */
-public record ValidationReport(boolean valid, List<DefinitionIssue> errors, List<DefinitionIssue> warnings) {
+public record ValidationReport(
+        boolean valid,
+        List<List<String>> executionPlan,
+        Set<String> postCompletion,
+        List<String> planDescription,
+        List<DefinitionIssue> errors,
+        List<DefinitionIssue> warnings) {
 
-    public static ValidationReport of(List<DefinitionIssue> errors, List<DefinitionIssue> warnings) {
-        return new ValidationReport(errors.isEmpty(), List.copyOf(errors), List.copyOf(warnings));
+    public static ValidationReport invalid(List<DefinitionIssue> errors) {
+        return new ValidationReport(false, List.of(), Set.of(), List.of(), List.copyOf(errors), List.of());
     }
 }

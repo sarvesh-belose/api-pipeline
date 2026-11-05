@@ -35,11 +35,6 @@ public class TestEndpoints {
         return Map.of("bytes", body.toString().length());
     }
 
-    @PostMapping("/api/v1/pipelines/{code}/runs")
-    public Map<String, Object> runs(@PathVariable String code, @RequestBody JsonNode body) {
-        return Map.of("code", code, "bytes", body.toString().length());
-    }
-
     @PostMapping("/api/v1/callbacks/{runId}/{stepId}")
     public Map<String, Object> callbacks(@PathVariable String runId, @PathVariable String stepId,
             @RequestBody JsonNode body) {
@@ -57,6 +52,13 @@ public class TestEndpoints {
             throw new com.crisil.apiorch.observability.ApiProblemException(
                     org.springframework.http.HttpStatus.CONFLICT, "illegal-run-state", "failed on another thread");
         });
+    }
+
+    @PostMapping("/api/v1/test/accepted")
+    public org.springframework.http.ResponseEntity<Void> accepted() {
+        return org.springframework.http.ResponseEntity.accepted().location(
+                org.springframework.web.servlet.support.ServletUriComponentsBuilder.fromCurrentContextPath()
+                        .path("/api/v1/runs/{id}").buildAndExpand("r-1").toUri()).build();
     }
 
     @GetMapping("/api/v1/test/slow")

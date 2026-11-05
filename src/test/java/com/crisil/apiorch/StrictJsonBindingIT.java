@@ -41,7 +41,7 @@ class StrictJsonBindingIT {
 
     @Test
     void freeFormBodiesAcceptAnyProperty() throws Exception {
-        HttpResponse<String> res = new Http(port).postJson("/api/v1/pipelines/demo/runs",
+        HttpResponse<String> res = new Http(port).postJson("/api/v1/callbacks/r1/s1",
                 "{\"anything\":1,\"password\":\"x\"}");
         assertThat(res.statusCode()).isEqualTo(200);
     }

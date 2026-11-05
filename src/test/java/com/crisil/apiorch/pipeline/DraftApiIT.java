@@ -77,9 +77,10 @@ class DraftApiIT {
         JsonNode b = body(res);
         assertThat(b.path("version").asInt()).isZero();
         assertThat(b.path("status").asText()).isEqualTo("DRAFT");
-        assertThat(b.path("updatedBy").asText()).isEqualTo("anonymous");
-        assertThat(b.at("/validation/valid").asBoolean()).isTrue();
-        assertThat(b.at("/validation/warnings")).isEmpty();
+        assertThat(b.path("updatedBy").asText()).isEqualTo("test-admin");
+        // The README example uses async, compensate and conditions, which R1 gates (US-3.2 AC7).
+        assertThat(b.at("/validation/valid").asBoolean()).isFalse();
+        assertThat(b.at("/validation/errors").findValuesAsText("code")).containsOnly("FEATURE_NOT_AVAILABLE");
 
         HttpResponse<String> again = http.postJson("/api/v1/admin/pipelines", createBody(code, definition(code)));
         assertThat(again.statusCode()).isEqualTo(409);

@@ -17,7 +17,7 @@ import com.crisil.apiorch.config.ApiorchProperties;
 class CorrelationIdFilterTest {
 
     private final CorrelationIdFilter filter = new CorrelationIdFilter(new ApiorchProperties(
-            new ApiorchProperties.Correlation("X-Correlation-Id"), null, null, null, null, null, null));
+            new ApiorchProperties.Correlation("X-Correlation-Id"), null, null, null, null, null, null, null, null, null, null, null));
 
     private String run(String inbound, MockHttpServletResponse response) throws Exception {
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/x");

@@ -57,7 +57,7 @@ class EndpointAuthApiIT {
 
     private String body(String name, String baseUrl, String auth) {
         return """
-                {"name":"%s","baseUrl":"%s","healthPath":"/health","connectTimeoutMs":1000,"readTimeoutMs":2000,
+                {"name":"%s","baseUrl":"%s","healthPath":"/health","connectTimeoutMs":5000,"readTimeoutMs":10000,
                  "auth":%s}""".formatted(name, baseUrl, auth);
     }
 
@@ -114,7 +114,7 @@ class EndpointAuthApiIT {
         String auth = "{\"type\":\"BEARER\",\"secretRef\":\"" + fileRef() + "\"}";
         http.postJson("/api/v1/admin/endpoints", body(name, "https://a.example.com", auth));
         String moved = """
-                {"name":"%s","baseUrl":"https://b.example.com","connectTimeoutMs":1000,"readTimeoutMs":2000}"""
+                {"name":"%s","baseUrl":"https://b.example.com","connectTimeoutMs":5000,"readTimeoutMs":10000}"""
                 .formatted(name);
         HttpResponse<String> res = http.putJson("/api/v1/admin/endpoints/" + name, moved, "\"0\"");
         assertThat(res.statusCode()).isEqualTo(400);

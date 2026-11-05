@@ -1,5 +1,14 @@
 # Production: SQL Server 2022. The datasource comes from SPRING_DATASOURCE_URL / _USERNAME / _PASSWORD.
 # Run the JVM with -Duser.timezone=UTC as a second guard; correctness does not depend on it (ADR-003 rule 5).
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # US-1.2: JWKS is discovered from the issuer. Do not add jwk-set-uri with an empty default: an empty value
+          # still activates the property-based decoder and breaks startup.
+          issuer-uri: ${APIORCH_JWT_ISSUER_URI}
+          audiences: ${APIORCH_JWT_AUDIENCE:apiorch}
 springdoc:
   api-docs.enabled: false
   swagger-ui.enabled: false

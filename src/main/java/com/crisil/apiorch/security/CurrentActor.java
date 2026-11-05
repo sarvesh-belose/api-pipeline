@@ -5,9 +5,9 @@ import java.security.Principal;
 import org.springframework.stereotype.Component;
 
 /**
- * Who is acting, for {@code created_by} and audit fields. Until US-1.2 adds the JWT resource server this is the
- * request principal when there is one and {@code anonymous} otherwise; US-1.2 switches it to the configured
- * principal claim ({@code apiorch.security.principal-claim}, default {@code sub}).
+ * Who is acting, for {@code created_by}, {@code published_by} and {@code actor} (US-1.2). The principal name is
+ * the {@code apiorch.security.principal-claim} of the JWT (default {@code sub}), set by {@link RolesClaimConverter};
+ * {@code dev-user} in the local dev mode; {@code anonymous} only where no authentication exists.
  */
 @Component
 public class CurrentActor {
