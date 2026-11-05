@@ -40,20 +40,20 @@ fields are rejected at publish by the feature gate (US-3.2 AC7).
 
 | Item | Value |
 |---|---|
-| Story effort (README sizes: S ≈ 2, M ≈ 4.5, L ≈ 8 dev-days midpoint) | **≈ 129 dev-days** (range 86–172) |
+| Story effort (README sizes: S ≈ 2, M ≈ 4.5, L ≈ 8 dev-days midpoint) | **≈ 134.5 dev-days**, agreed at S6 on 2026-11-05 (was ≈ 129 before the re-estimate) |
 | Non-story work: Sprint 0 setup, local build tiers, environments, shared test harnesses, hardening | **≈ 20 dev-days** |
-| **Total** | **≈ 150 dev-days** (range ≈ 105–200) |
+| **Total** | **≈ 155 dev-days** including Sprint 0; **≈ 150 still to do** from Sprint 1 against a capacity of 168 (6 sprints × 28) |
 | Team assumed | 4 backend developers, 1 QA/SDET (shared), part-time DevOps support. No DBA team until production (US-8.5) |
 | Cadence | 2-week sprints. Focus factor 0.7, so ≈ 7 productive dev-days per developer per sprint and **≈ 28 per sprint** for the team |
 | Duration | **Sprint 0 (1 week) + 6 sprints (12 weeks) ≈ 13 weeks** |
 
-**Re-estimate before Sprint 1.** These stories grew in the latest backlog edits, but their size
+**Re-estimated at S6 (2026-11-05):** the figures below were agreed. These stories grew in the latest backlog edits, but their size
 labels didn't change:
 
 | Story | Added scope | Re-estimate |
 |---|---|---|
 | US-1.1 | ArchUnit rules with violating fixtures, three test tiers, `MigrationIT` with partition assertions, branch-coverage gate, the stack-compatibility gate | L |
-| US-3.1 | `dslVersion`; the JSONata go/no-go gate with the restricted-evaluator fallback | L, or L+ if the gate fails |
+| US-3.1 | `dslVersion`; the JSONata go/no-go gate with the restricted-evaluator fallback | **L** (agreed: G2 passed, so no fallback) |
 | US-7.1 | Database grant model (append-only roles), monthly partitions plus helper function | M+ |
 | US-7.4 | Partition pruning with `EXPLAIN` assertions, `PAYLOAD_ACCESSED` events | M+ |
 
@@ -74,7 +74,7 @@ lives outside the team.
 | S3 | ~~Dev SQL Server database and DBA ticket~~ **Changed 2026-11-05 (owner direction): there is no DBA team until production.** Development and every test use SQL Server 2022 through Testcontainers (`./mvnw verify -Pslow`), and the Flyway `sqlserver/` migrations create the roles and grants there (US-7.1). The DBA request became story [US-8.5](../user-stories/E8-enablement/US-8.5-production-database-handover.md) (R2): provisioning and verification scripts plus an operations guide, handed to the DBA team at the move to production | US-8.5 written | Tech lead | **Done 2026-11-05.** The draft ticket `docs/sprint0/S3-dba-request.md` was removed; its content is in US-8.5 |
 | S4 | ~~Raise the platform gateway route PR~~ **Dropped 2026-11-05 (owner direction).** apiorch is independent and uses no shared API gateway or service registry. US-1.4 now publishes apiorch on each environment's own load balancer (stable public address, forwarded headers, callback-URL guard), which is Sprint 2 story work with no external dependency | — | — | The S4 draft and `ops/gateway/apiorch-route.yml` were removed |
 | S5 | Walking skeleton: `pom.xml`, app boots, `MigrationIT` stub, one Testcontainers IT | Merged skeleton | Platform dev | Unblocks all four workstreams on day 1 of Sprint 1. US-1.1's full ACs finish in Sprint 1 **Update 2026-11-04: built** on branch `sprint0/walking-skeleton`. It includes `pom.xml`, `mvnw`, the `local`/`test`/`prod` profiles, the baseline and H2-shim migrations, `MigrationIT` (H2) + `MigrationSqlServerIT` (`slow`), `ApplicationSmokeIT`, a skeleton `ArchUnitRulesTest`, and both JaCoCo gates. `verify`: 9/9 tests; `verify -Pslow`: 12/12. The local profile boots, with readiness `UP` on 9091. **Update 2026-11-05: merged into `main`** (merge commit `cc7a7e3`) after `verify` 9/9 and `verify -Pslow` 12/12 on a developer machine. |
-| S6 | Re-estimate (§2), confirm the team, agree on the architecture review checkpoints (§8) | Updated sprint plan | Whole team | **Update 2026-11-05:** review pack in [`docs/sprint0/S6-re-estimate.md`](sprint0/S6-re-estimate.md): proposed ≈ 134.5 story dev-days (≈ 18 slack at 4 developers), team table and proposed review dates. Not yet held. |
+| S6 | Re-estimate (§2), confirm the team, agree on the architecture review checkpoints (§8) | Updated sprint plan | Whole team | **Update 2026-11-05:** review pack in [`docs/sprint0/S6-re-estimate.md`](sprint0/S6-re-estimate.md): proposed ≈ 134.5 story dev-days (≈ 18 slack at 4 developers), team table and proposed review dates. Not yet held. **Update 2026-11-05: held.** Proposed estimates agreed (≈ 134.5 story dev-days, demand ≈ 150 vs capacity 168, no plan change), 4 developers, Sprint 1 starts Mon 16 Nov 2026, review dates accepted. Still open: names per role and Dec–Jan leave. |
 
 **Sprint 0 exit** (changed 2026-11-05): ADR-003 (superseding ADR-001) and ADR-002 accepted, both test tiers green on
 the skeleton on a developer machine and the skeleton merged into `main`, and the production database
