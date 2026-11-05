@@ -2,10 +2,11 @@
 
 | | |
 |---|---|
-| **Status** | Proposed. **Supersedes [ADR-001](ADR-001-stack.md)**. The tech lead accepts it at the Sprint 0 review (R1 plan §3, gate G1) |
+| **Status** | **Accepted 2026-11-05** at the Sprint 0 review (R1 plan §3, gate G1), with review decisions 1 and 4 as recommended ([acceptance record](../sprint0/G-adr-acceptance.md)). **Supersedes [ADR-001](ADR-001-stack.md)** |
 | **Date** | 2026-11-04 |
 | **Gate** | G1 (re-run) in [R1-implementation-plan.md](../R1-implementation-plan.md) §3; US-1.1 "scaffold check" |
-| **Decision** | **Spring Boot 3.5.14 + Spring Cloud 2025.0.3 on JDK 17. SQL Server in production; H2 2.3 in `MODE=MSSQLServer` for local runs and the fast test tier; real SQL Server (Testcontainers) for the nightly tier** |
+| **Decision** | **Spring Boot 3.5.14 + Spring Cloud 2025.0.3 on JDK 17. SQL Server in production; H2 2.3 in `MODE=MSSQLServer` for local runs and the fast test tier; real SQL Server (Testcontainers) for the `slow` tier** |
+| **Amended** | 2026-11-05, owner direction: **no CI server; all builds run locally.** The `slow` tier runs with `./mvnw verify -Pslow` before merge and before each sprint review, instead of nightly (README §13). apiorch uses **no service registry**, so no Spring Cloud module is needed in R1 (US-1.4) |
 
 ## Context
 
@@ -13,7 +14,7 @@ ADR-001 chose Boot 4.1.2 on PostgreSQL. The product owner then set two constrain
 - **Spring Boot 3.5.14**, exactly. The owner confirmed this knowing Boot 3.5's open-source support
   ended on 2026-06-30.
 - **SQL Server** as the production database, with **H2 in SQL Server compatibility mode** for
-  development and tests. That gives an H2 fast tier on every build plus a nightly tier on real
+  development and tests. That gives an H2 fast tier on every build plus a `slow` tier on real
   SQL Server.
 
 The gate questions were:
@@ -84,7 +85,7 @@ The gate questions were:
    `hibernate.type.preferred_instant_jdbc_type=TIMESTAMP` (F6). Production JVMs also run with
    `-Duser.timezone=UTC` as a second guard, but correctness must not depend on it. The probe passes
    with the JVM on IST.
-6. **Lock-sensitive behaviour is proven on SQL Server, not on H2.** The nightly tier runs the
+6. **Lock-sensitive behaviour is proven on SQL Server, not on H2.** The `slow` tier (run locally) runs the
    database contract suite and every concurrency, lease, claim, partition, grant or JSON-check
    test against real SQL Server. A test that passes only on H2 is not evidence for these behaviours
    (F3).
@@ -95,7 +96,7 @@ The gate questions were:
 |---|---|
 | **Boot 3.5.14 + Cloud 2025.0.3, SQL Server + H2 MSSQL mode** | **Chosen** (owner constraint). Probe passes 24/24; findings F1–F16 below |
 | Boot 4.1.2 + Cloud 2025.1.4 on PostgreSQL (ADR-001) | Superseded by the owner's constraints. It is still the technically preferred line for support length (see Consequences) |
-| Boot 3.5.14 with SQL Server everywhere (no H2) | Rejected for the fast tier. Every build would need Docker and about 60 s to start SQL Server. Kept for the nightly tier |
+| Boot 3.5.14 with SQL Server everywhere (no H2) | Rejected for the fast tier. Every build would need Docker and about 60 s to start SQL Server. Kept for the `slow` tier |
 | H2 in its native mode with a translation layer | Rejected. Two SQL dialects in the code is exactly what rule 4 keeps to one class |
 
 **Support caveat.** Boot 3.5's open-source support ended **2026-06-30**. Commercial support
@@ -145,12 +146,12 @@ The fast tier needs no Docker.
 | F5 | **`SET LOCK_TIMEOUT` sent as its own JDBC statement has no effect on SQL Server**, because mssql-jdbc runs prepared statements through `sp_executesql` and the `SET` reverts on return. The second locker waited the full 10 s | US-5.5 (bounded lock wait), US-3.3 (per-code publish lock) | `SqlDialect.withLockTimeout(sql, ms)` prefixes it in the same batch; config `apiorch.engine.lock-timeout-ms` (default 2000) |
 | F6 | **Hibernate 6.6 maps `Instant` to `TIMESTAMP_UTC` by default and then ignores `hibernate.jdbc.time_zone`** on `DATETIME2`. Values read back shifted by the JVM offset (−5 h 30 min on this IST machine) | US-1.1, README §11, every `Instant` column | Rule 5: `hibernate.type.preferred_instant_jdbc_type=TIMESTAMP` plus `jdbc.time_zone=UTC`, and a round-trip test with a non-UTC JVM zone |
 | F7 | **Only Jackson 2 is present.** A plain `JsonMapper` defaults to `FAIL_ON_UNKNOWN_PROPERTIES=true`, but **Boot's auto-configured `ObjectMapper` sets it to `false`** (measured) | US-1.1 AC11 and AC12, US-2.1, US-2.2, US-3.1 | Keep `spring.jackson.deserialization.fail-on-unknown-properties=true` and the AC12 test. Replace ADR-001 F7's ArchUnit rule (no `com.fasterxml.jackson.databind`) with "no `tools.jackson` imports" |
-| F8 | H2 has no `ISJSON` and no partitioning, so those checks exist only in `sqlserver/` migrations | US-7.1, US-7.4, US-7.8 | JSON-validity, partition and grant tests are `slow`-tagged and run nightly. On H2, JSON validity is guaranteed only by the application writer |
+| F8 | H2 has no `ISJSON` and no partitioning, so those checks exist only in `sqlserver/` migrations | US-7.1, US-7.4, US-7.8 | JSON-validity, partition and grant tests are `slow`-tagged and run in the local `slow` tier. On H2, JSON validity is guaranteed only by the application writer |
 | F9 | SQL Server partitioning: a `RANGE RIGHT` function `pf_month` on `DATETIME2(6)`, scheme `ps_month`, and a clustered PK `(run_id, seq, occurred_at)` on `ps_month(occurred_at)`. The partitioning column must be in the clustered key. Boundaries are created by dynamic SQL from `SYSUTCDATETIME()` | README §10, US-7.1, US-7.6 retention, US-7.4 | **One shared function `pf_month` and scheme `ps_month`** serve all four partitioned tables (`run_event`, `step_attempt`, `run_exchange`, `callback_inbox`), which all drop rows at the run retention. One `SPLIT` therefore rolls every table forward. A `MERGE` requires that month to be truncated on **all four** tables first, so the retention job truncates all four, then merges. Monthly roll-forward is `ALTER PARTITION SCHEME … NEXT USED` + `ALTER PARTITION FUNCTION … SPLIT RANGE`, run by the retention job. Retention drops via `TRUNCATE TABLE … WITH (PARTITIONS (n))` + `MERGE RANGE` |
 | F10 | Append-only grants: `CREATE ROLE`, `GRANT SELECT, INSERT`, then `EXECUTE AS USER` → `UPDATE` refused with **error 229, SQLState S0005**. Spring translates it to `UncategorizedSQLException` (measured), not `BadSqlGrammarException` as on PostgreSQL | US-7.1 (replaces ADR-001 F9), ops diagnostics | Detect privilege denials by vendor code 229 (SQL Server) via `SQLException.getErrorCode()` |
 | F11 | logstash-logback-encoder **8.1**: XML element `<jsonGeneratorDecorator class="…MaskingJsonGeneratorDecorator">`, code `encoder.setJsonGeneratorDecorator(…)`, and **a programmatic decorator must be `start()`ed** (NPE otherwise). In XML a `<value>` regex is **cut at a bare `,` or `}`**, which threw `PatternSyntaxException` at startup | US-7.3 (reverts ADR-001 F4), US-1.3 | Use the 8.1 names. Write a literal comma or closing brace in mask regexes as `\x2C` and `\x7D`. ADR-001 F5 (the message field needs value masks) still holds |
 | F12 | Spring Security 6.5: an unauthenticated request to a `denyAll()` actuator endpoint gets **401** (Security 7 gave 403) | US-1.2 AC5 | AC: "Prometheus is refused (401 or 403) without credentials". Do not pin the code |
-| F13 | Testcontainers **1.21.4** works with Docker Engine 29.9.2 (API 1.56). The SQL Server 2022 image starts in about 30–40 s after the first pull (about 1.5 GB) | R1 plan S0 item S2, risk R7 | Nightly CI runner needs Docker and the image cached. Developers do not need Docker for the fast tier |
+| F13 | Testcontainers **1.21.4** works with Docker Engine 29.9.2 (API 1.56). The SQL Server 2022 image starts in about 30–40 s after the first pull (about 1.5 GB) | R1 plan S0 item S2, risk R7 | Every developer machine that runs the `slow` tier needs Docker and the image cached (amended 2026-11-05: no CI). Developers do not need Docker for the fast tier |
 | F14 | Lock, claim and `event_seq` behaviour are identical on both databases, once F3–F5 are applied | README §5.1 | None. This is the evidence that the H2 fast tier is a valid proxy for everything except locking itself |
 | F15 | **H2 has no `JSON_VALUE`** (nor `OPENJSON`). `TOP (n)`, `DELETE TOP (n)`, `OFFSET … FETCH NEXT … ROWS ONLY` and `BIT` comparisons (`= 0`/`= 1`) all work in H2 MSSQL mode (checked with the H2 2.3.232 shell) | US-7.1, US-7.4, US-8.4, any query on JSON content | **No SQL reads inside a JSON column.** A field that must be filtered on is written to its own column at insert time (for example `run_event.step_id`, `event_type`). JSON columns are stored, returned and checked with `ISJSON`, never queried. Paging uses `ORDER BY … OFFSET … FETCH`; batches use `TOP (n)` |
 | F16 | **SQL Server allows only one NULL in a unique index; H2 allows many, and has no filtered indexes** (`CREATE UNIQUE INDEX … WHERE` is a syntax error on H2) | US-4.7 (`(pipeline_code, idempotency_key)` with NULL keys), any nullable unique column | Nullable unique keys are vendor migrations: `sqlserver/` uses a filtered unique index `WHERE idempotency_key IS NOT NULL`, `h2/` a plain unique index. A `slow`-tier test inserts two runs without a key |
@@ -163,10 +164,10 @@ The fast tier needs no Docker.
   findings will need SQL Server equivalents.
 - **Two-tier testing.**
   - **Fast tier:** every build, H2, no Docker, about 1.5 min.
-  - **Nightly tier:** `-Pslow`, SQL Server 2022, about 2.5 min for the probe.
+  - **Slow tier (local, before merge and sprint review):** `-Pslow`, SQL Server 2022, about 2.5 min for the probe.
 
-  Merge rules: the fast tier gates every merge, and a red nightly run blocks the next release
-  candidate.
+  Merge rules (amended 2026-11-05): the fast tier gates every commit, and a red local `slow` run
+  blocks the merge and the sprint review demo.
 - **Rule 4 is a review gate.** Any `if (db == …)` outside `SqlDialect` fails code review and the
   ArchUnit rule.
 - **ADR-001's PostgreSQL findings** are superseded:
@@ -183,4 +184,5 @@ The fast tier needs no Docker.
 1. Apply F1–F16 to the README (§5.1, §5.2, §10, §11, §13, §14), the affected stories and the R1
    plan.
 2. Mark ADR-001 superseded.
-3. Tech lead acceptance at the Sprint 0 review.
+3. ~~Tech lead acceptance at the Sprint 0 review.~~ Done 2026-11-05.
+4. Support path (review decision 1): commercial support if production comes before a Boot 4 move, otherwise patch bumps within 3.5.x. Confirm which branch applies once the production date is set, and record the Boot 4 move as its own dated ADR.

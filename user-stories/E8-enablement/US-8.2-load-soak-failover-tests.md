@@ -59,5 +59,6 @@ experiments on the database.
 - **Duplicates:** the WireMock request journal grouped by `Idempotency-Key`.
 
 **Test notes**
-- The suite runs nightly in a dedicated environment, not in the PR pipeline.
+- The suite runs on demand in a dedicated environment before each release, not in the everyday
+  `./mvnw verify` build.
 - Thresholds live in `perf/thresholds.yml`, so they can be tuned without code changes.

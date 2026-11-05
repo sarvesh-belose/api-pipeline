@@ -1,0 +1,5 @@
+# Production: SQL Server 2022. The datasource comes from SPRING_DATASOURCE_URL / _USERNAME / _PASSWORD.
+# Run the JVM with -Duser.timezone=UTC as a second guard; correctness does not depend on it (ADR-003 rule 5).
+springdoc:
+  api-docs.enabled: false
+  swagger-ui.enabled: false

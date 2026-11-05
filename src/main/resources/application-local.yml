@@ -1,0 +1,10 @@
+# Local development: H2 in-memory in SQL Server mode, no Docker (ADR-003 rule 1).
+spring:
+  datasource:
+    url: jdbc:h2:mem:apiorch;MODE=MSSQLServer;DATABASE_TO_UPPER=FALSE;CASE_INSENSITIVE_IDENTIFIERS=TRUE;DB_CLOSE_DELAY=-1
+    username: sa
+    password: ""
+    hikari.maximum-pool-size: 10
+springdoc:
+  api-docs.enabled: true
+  swagger-ui.enabled: true

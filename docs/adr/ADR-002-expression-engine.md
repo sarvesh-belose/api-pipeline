@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Proposed. The tech lead accepts it at the Sprint 0 review (R1 plan §3, gate G2); the Business Owner signs off on the regex restriction (D6) |
+| **Status** | **Accepted 2026-11-05** at the Sprint 0 review (R1 plan §3, gate G2), with review decision 3 (D7) as recommended. **D6 (regex ban) signed off** by the Business Owner on 2026-11-05 ([acceptance record](../sprint0/G-adr-acceptance.md)) |
 | **Date** | 2026-11-04 |
 | **Gate** | G2 in [R1-implementation-plan.md](../R1-implementation-plan.md) §3; the go/no-go table in US-3.1 |
 | **Decision** | **Use `com.dashjoin:jsonata` 0.9.10 behind a `GuardedJsonataEvaluator`** (US-3.1 outcome row 2). The restricted-syntax fallback is not needed |
@@ -125,7 +125,7 @@ evaluation. Against the 20 ms-per-step budget in README §14, this is negligible
   - `apiorch.expression.timeout-ms` (1000; validated 500–5000), `apiorch.expression.max-depth`
     (200), `apiorch.expression.max-length` (4096) and `apiorch.expression.max-nesting` (64);
   - **don't lower the timeout below about 1 s** without re-running the contention test.
-- **DSL restriction:** no regex literals (D6), pending Business Owner sign-off.
+- **DSL restriction:** no regex literals (D6), signed off by the Business Owner on 2026-11-05.
 - **Sprint 1 work** inside US-3.1/US-4.3: the built-in audit and `BuiltinAbuseIT` (D3), about
   1–2 dev-days.
 - **The probe is reusable:** re-run it on any JSONata version change.

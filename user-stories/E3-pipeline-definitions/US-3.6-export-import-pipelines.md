@@ -15,7 +15,7 @@ business changes are promoted through environments instead of being re-typed in 
 - **Publish** then follows the normal US-3.3 flow, including four-eyes if enabled. The published
   version keeps `source_checksum`, so auditors can match production to the tested artefact.
 
-**Out of scope:** automated promotion pipelines (CI/CD jobs can call these APIs) and endpoint
+**Out of scope:** automated promotion (scripts can call these APIs) and endpoint
 export.
 
 ## Acceptance criteria
