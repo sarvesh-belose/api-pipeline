@@ -31,7 +31,8 @@ class EndpointClientRegistryTest {
             new org.springframework.boot.context.properties.source.MapConfigurationPropertySource())
             .bindOrCreate("apiorch", ApiorchProperties.class);
     private final EndpointMapper mapper = new EndpointMapper(new ObjectMapper(), properties);
-    private final EndpointClientRegistry registry = new EndpointClientRegistry(repository, mapper, RestClient.builder());
+    private final EndpointClientRegistry registry = new EndpointClientRegistry(repository, mapper, RestClient.builder(),
+            mock(com.crisil.apiorch.http.auth.SecretResolver.class), mock(com.crisil.apiorch.http.auth.OAuth2TokenCache.class));
     private final List<NameAndVersion> versions = new ArrayList<>();
 
     private EndpointEntity entity(String name, String baseUrl, String httpVersion) {

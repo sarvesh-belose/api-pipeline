@@ -188,6 +188,23 @@ gantt
 table above. The dates are illustrative only (see the note at the top): Sprint 0 is assumed to start Monday 9 Nov 2026, so shift
 them to the real start date.*
 
+**Sprint 1 status (2026-11-05): done.** Merged or ready on `sprint1/*` branches; both tiers green
+(`verify -Pslow`, 178 tests).
+
+| Planned | Delivered | Left for later sprints |
+|---|---|---|
+| US-1.1 (all ACs) | Problem+json for every error, per-path 413, strict JSON, readiness with the database down, graceful shutdown, all ArchUnit rules with violating fixtures, test tiering, coverage gates | Partition assertion lives in `SchemaSqlServerIT` |
+| US-1.3 | JSON logs, MDC scopes and task decorator, correlation ID incl. async dispatch | Outbound header test with US-4.3; `traceId`/`spanId` with US-7.9 |
+| US-3.1 | DSL records, strict binder with JSON pointers, draft API, `dslVersion` | Expression checks and `JsonataSpikeTest` with US-3.2 |
+| Schema-ahead V2–V7 | Every R1 table, partitions, ISJSON, roles and DENY grants | — |
+| Engine contracts | `ExpressionEvaluator`, `StepExecutor`, `RunLeaseService` (interface in `engine`, JDBC implementation in `persistence`), `ActivityRecorder`, `CompiledPipeline` + `PipelineCompiler` | Implementations in their stories |
+| Harnesses | `MutableClock`, `StubStepExecutor`, `FakeExpressionEvaluator`, `TestPipelines`, `ClusterTestSupport` | Engine hooks for `ClusterTestSupport` with US-5.5 |
+| Start US-7.1 | `JdbcActivityRecorder`: gap-free seq (50 concurrent writers on SQL Server), MANDATORY, after-commit log | AC1 with US-4.1; AC5 details contract per event as events are emitted |
+| US-2.1 → start US-2.2 | US-2.1 complete; US-2.2 complete except what needs step execution | `AUTH_ERROR` attempts, `TOKEN_REFRESHED` event, header masking with US-4.3, US-7.2, US-7.3 |
+
+**Deviation:** endpoint and draft APIs have no role checks yet, and the actor is `anonymous`, until
+US-1.2 (Sprint 2).
+
 ## 7. Cross-cutting enablers (in Sprint 1, so the four tracks don't block each other)
 
 1. **Schema-ahead.** Write `V2__endpoint` through `V7__run_exchange` in Sprint 1, straight from

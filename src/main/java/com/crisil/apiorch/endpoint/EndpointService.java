@@ -74,6 +74,7 @@ public class EndpointService {
                     .with("currentVersion", entity.getRowVersion());
         }
         EndpointConfig before = mapper.toConfig(entity);
+        requireReferencesOnHostChange(before, request);
         mapper.apply(request, entity);
         entity.touch(Instant.now(clock), actor);
         repository.saveAndFlush(entity);
@@ -82,6 +83,33 @@ public class EndpointService {
         log.info("endpoint updated name={} version={} actor={} changed={}", name, after.version(), actor,
                 changedFields(before, after));
         return after;
+    }
+
+    /**
+     * US-2.2 AC1b: moving an endpoint (or its token URL) to another host must re-supply the secret references in the
+     * same request, so credentials are never silently redirected to a new host.
+     */
+    static void requireReferencesOnHostChange(EndpointConfig before, EndpointRequest request) {
+        if (before.authType() == EndpointRequest.AuthType.NONE) {
+            return;
+        }
+        boolean hostChanged = !host(before.baseUrl()).equalsIgnoreCase(host(request.baseUrl()));
+        EndpointRequest.Auth after = request.auth();
+        boolean tokenUrlChanged = after != null && before.auth().tokenUrl() != null
+                && !before.auth().tokenUrl().equals(after.tokenUrl());
+        if ((hostChanged || tokenUrlChanged) && (after == null || after.type() != before.authType())) {
+            throw new ValidationFailedException(List.of(new FieldError("auth",
+                    "re-enter secret references when the host changes")));
+        }
+    }
+
+    private static String host(String url) {
+        try {
+            String host = java.net.URI.create(url).getHost();
+            return host != null ? host : "";
+        } catch (IllegalArgumentException e) {
+            return "";
+        }
     }
 
     @Transactional
@@ -123,7 +151,7 @@ public class EndpointService {
         diff(changed, "readTimeoutMs", a.readTimeoutMs(), b.readTimeoutMs());
         diff(changed, "httpVersion", a.httpVersion(), b.httpVersion());
         diff(changed, "enabled", a.enabled(), b.enabled());
-        diff(changed, "auth", a.authType(), b.authType());
+        diff(changed, "auth", a.auth(), b.auth());
         diff(changed, "resilience.circuitBreaker", a.circuitBreaker(), b.circuitBreaker());
         diff(changed, "resilience.bulkhead", a.bulkhead(), b.bulkhead());
         diff(changed, "resilience.retry", a.retry(), b.retry());

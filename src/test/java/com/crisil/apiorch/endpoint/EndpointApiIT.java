@@ -118,12 +118,12 @@ class EndpointApiIT {
     }
 
     @Test
-    void unsupportedAuthTypeIsRejectedUntilUs22() throws Exception {
+    void incompleteAuthIsRejected() throws Exception {
         HttpResponse<String> res = http.postJson("/api/v1/admin/endpoints", """
                 {"name":"%s","baseUrl":"https://a.example.com","connectTimeoutMs":2000,"readTimeoutMs":5000,
-                 "auth":{"type":"BEARER"}}""".formatted(unique("auth")));
+                 "auth":{"type":"BEARER","username":"x"}}""".formatted(unique("auth")));
         assertThat(res.statusCode()).isEqualTo(400);
-        assertThat(res.body()).contains("auth.type");
+        assertThat(res.body()).contains("auth.secretRef", "auth.username");
     }
 
     @Test

@@ -21,7 +21,11 @@ import com.crisil.apiorch.endpoint.EndpointConfig;
 import com.crisil.apiorch.endpoint.EndpointEntity;
 import com.crisil.apiorch.endpoint.EndpointMapper;
 import com.crisil.apiorch.endpoint.EndpointRepository;
+import com.crisil.apiorch.endpoint.dto.EndpointRequest.AuthType;
 import com.crisil.apiorch.endpoint.dto.EndpointRequest.HttpVersion;
+import com.crisil.apiorch.http.auth.AuthInterceptor;
+import com.crisil.apiorch.http.auth.OAuth2TokenCache;
+import com.crisil.apiorch.http.auth.SecretResolver;
 
 /**
  * The live {@link EndpointRuntime} per endpoint name (US-2.1 AC4). A change on this node rebuilds the runtime after
@@ -37,12 +41,16 @@ public class EndpointClientRegistry {
     private final EndpointRepository repository;
     private final EndpointMapper mapper;
     private final RestClient.Builder restClientBuilder;
+    private final SecretResolver secrets;
+    private final OAuth2TokenCache tokens;
 
     public EndpointClientRegistry(EndpointRepository repository, EndpointMapper mapper,
-            RestClient.Builder restClientBuilder) {
+            RestClient.Builder restClientBuilder, SecretResolver secrets, OAuth2TokenCache tokens) {
         this.repository = repository;
         this.mapper = mapper;
         this.restClientBuilder = restClientBuilder;
+        this.secrets = secrets;
+        this.tokens = tokens;
     }
 
     /** The current runtime, loading it on first use. Empty if the endpoint does not exist. */
@@ -103,7 +111,11 @@ public class EndpointClientRegistry {
                 .build();
         JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(httpClient);
         factory.setReadTimeout(Duration.ofMillis(config.readTimeoutMs()));
-        RestClient restClient = restClientBuilder.clone().requestFactory(factory).build();
+        RestClient.Builder builder = restClientBuilder.clone().requestFactory(factory);
+        if (config.authType() != AuthType.NONE) {
+            builder.requestInterceptor(new AuthInterceptor(config.name(), config.auth(), secrets, tokens));
+        }
+        RestClient restClient = builder.build();
         return new EndpointRuntime(config, restClient, httpClient);
     }
 }
