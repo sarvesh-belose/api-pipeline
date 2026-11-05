@@ -37,10 +37,12 @@ public record ApiorchProperties(
     public record Correlation(@DefaultValue("X-Correlation-Id") @NotBlank @Pattern(regexp = "[A-Za-z0-9-]+") String header) {
     }
 
-    /** US-3.1. */
+    /** US-3.1, US-3.3. */
     public record Definition(
             @DefaultValue("524288") @Min(1024) long maxDocumentBytes,
-            @DefaultValue("50") @Min(1) @Max(500) int maxSteps) {
+            @DefaultValue("50") @Min(1) @Max(500) int maxSteps,
+            @DefaultValue("5000") @Min(0) long latestCacheTtlMs,
+            @DefaultValue("false") boolean requireFourEyes) {
     }
 
     /** US-4.1. */

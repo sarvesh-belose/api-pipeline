@@ -6,6 +6,7 @@ import java.util.List;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -20,23 +21,48 @@ import org.springframework.web.bind.annotation.RestController;
 import com.crisil.apiorch.pipeline.dto.DraftRequest;
 import com.crisil.apiorch.pipeline.dto.DraftResponse;
 import com.crisil.apiorch.pipeline.dto.PipelineSummary;
+import com.crisil.apiorch.pipeline.dto.PublishRequest;
 import com.crisil.apiorch.pipeline.dto.ValidateResponse;
+import com.crisil.apiorch.pipeline.dto.VersionResponse;
+import com.crisil.apiorch.pipeline.dto.VersionSummary;
 import com.crisil.apiorch.security.CurrentActor;
 import com.crisil.apiorch.web.ETags;
 
-/** {@code /api/v1/admin/pipelines} drafts (US-3.1, README §9). Roles arrive with US-1.2. */
+/** {@code /api/v1/admin/pipelines}: drafts (US-3.1), validate (US-3.2), publish and versions (US-3.3). */
 @RestController
 @RequestMapping("/api/v1/admin/pipelines")
 public class PipelineAdminController {
 
     private final DraftService drafts;
     private final ValidateService validation;
+    private final PublishService publishing;
     private final CurrentActor actor;
 
-    public PipelineAdminController(DraftService drafts, ValidateService validation, CurrentActor actor) {
+    public PipelineAdminController(DraftService drafts, ValidateService validation, PublishService publishing,
+            CurrentActor actor) {
         this.drafts = drafts;
         this.validation = validation;
+        this.publishing = publishing;
         this.actor = actor;
+    }
+
+    @PostMapping("/{code}/publish")
+    public ResponseEntity<VersionResponse> publish(@PathVariable String code,
+            @RequestBody(required = false) @Validated PublishRequest request, Principal principal) {
+        VersionResponse published = publishing.publish(code, request == null ? null : request.comment(),
+                actor.of(principal));
+        return ResponseEntity.created(URI.create("/api/v1/admin/pipelines/" + code + "/versions/"
+                + published.version())).body(published);
+    }
+
+    @GetMapping("/{code}/versions")
+    public List<VersionSummary> versions(@PathVariable String code) {
+        return publishing.list(code);
+    }
+
+    @GetMapping("/{code}/versions/{version}")
+    public VersionResponse version(@PathVariable String code, @PathVariable String version) {
+        return publishing.get(code, version);
     }
 
     /** US-3.2: validate the draft, or the definition in the body, without saving. */

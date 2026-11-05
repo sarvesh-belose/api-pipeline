@@ -219,6 +219,18 @@ US-1.2 (Sprint 2).
 (`RunDecision`, `RunContext`). Until US-4.3 the production step executor fails every step with
 `STEP_EXECUTOR_UNAVAILABLE`.
 
+**Sprint 3 status (2026-11-05): in progress** on `sprint3/*` branches; both tiers green (`verify -Pslow`, 314 tests).
+
+| Planned | Delivered | Still to do this sprint |
+|---|---|---|
+| Finish US-3.3 → US-3.4 → US-4.2 | US-3.3 complete: `POST …/{code}/publish` under the `pipeline` row lock, canonical SHA-256 checksum (keys sorted, step order kept), `no-changes`, `version-conflict` for a lost race (H2 and SQL Server), optional four-eyes, `GET …/versions`, `…/versions/{v\|latest}`; latest-version cache (5 s TTL, evicted on publish after commit) | US-3.4 rollback, US-4.2 async mode |
+| US-4.3 paired with US-7.2 → US-7.3 | — | All three |
+| US-7.6 core, US-7.5 core | — | `ContextCipher`, `ApiorchMetrics` facade |
+
+**Note:** `ReorderNoRedeployIT` reads step order from the stub executor; it adds the WireMock request-order check
+once US-4.3 lands. Cross-node convergence is shown by a version written straight to the table (no local event)
+being picked up within the TTL; the two-context version waits for `ClusterTestSupport` engine hooks (US-5.5).
+
 ## 7. Cross-cutting enablers (in Sprint 1, so the four tracks don't block each other)
 
 1. **Schema-ahead.** Write `V2__endpoint` through `V7__run_exchange` in Sprint 1, straight from
