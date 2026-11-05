@@ -25,7 +25,7 @@ abstract class AttemptWriterContract {
         Instant start = Instant.now().truncatedTo(ChronoUnit.MICROS);
         return new AttemptRecord(run, "api1", 1, 1, "REQUEST", 3, "kyc-svc", "POST", "https://kyc.example.com/kyc",
                 Map.of("Content-Type", "application/json"), "{\"customerId\":\"C-77\"}", 20, 201,
-                Map.of("X-Ref", "r-1"), responseBody, responseBody.getBytes(java.nio.charset.StandardCharsets.UTF_8).length,
+                Map.of("X-Ref", "r-1", "Content-Type", "application/json"), responseBody, responseBody.getBytes(java.nio.charset.StandardCharsets.UTF_8).length,
                 "SUCCESS", null, null, "CLOSED", null, start, start.plusMillis(42), 42);
     }
 
@@ -45,14 +45,24 @@ abstract class AttemptWriterContract {
     @Test
     void longBodiesAreTruncatedButSizesStayTrue() {
         UUID run = UUID.randomUUID();
-        String big = "é".repeat(200_000);
+        String big = "\"" + "é".repeat(200_000) + "\"";
         UUID id = tx.execute(s -> writer.write(attempt(run, big)));
         Map<String, Object> row = jdbc.sql("SELECT response_body, response_bytes, response_truncated FROM step_attempt "
                 + "WHERE id = :id").param("id", id).query().singleRow();
-        assertThat(((Number) row.get("response_bytes")).longValue()).isEqualTo(400_000);
+        assertThat(((Number) row.get("response_bytes")).longValue()).isEqualTo(400_002);
         assertThat(row.get("response_truncated")).isIn(true, 1, (byte) 1);
         assertThat(((String) row.get("response_body")).getBytes(java.nio.charset.StandardCharsets.UTF_8).length)
                 .isLessThanOrEqualTo(AttemptWriter.DEFAULT_MAX_BODY_BYTES);
+    }
+
+    @Test
+    void bodiesAreMaskedBeforeTruncationAndUnparseableBodiesArePlaceholders() {
+        UUID masked = tx.execute(s -> writer.write(attempt(UUID.randomUUID(), "{\"password\":\"p\",\"x\":1}")));
+        assertThat(jdbc.sql("SELECT response_body FROM step_attempt WHERE id = :id").param("id", masked)
+                .query(String.class).single()).isEqualTo("{\"password\":\"***\",\"x\":1}");
+        UUID broken = tx.execute(s -> writer.write(attempt(UUID.randomUUID(), "{not json")));
+        assertThat(jdbc.sql("SELECT response_body FROM step_attempt WHERE id = :id").param("id", broken)
+                .query(String.class).single()).isEqualTo("<unparseable body: 9 bytes, application/json>");
     }
 
     @Test

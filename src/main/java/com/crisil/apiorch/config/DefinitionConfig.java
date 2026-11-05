@@ -11,12 +11,10 @@ import com.crisil.apiorch.expression.ExpressionEvaluator;
 @Configuration(proxyBeanMethods = false)
 public class DefinitionConfig {
 
-    /** Until US-7.3 makes it configurable, the default capture level is {@code METADATA} (README §11). */
-    static final String DEFAULT_CAPTURE = "METADATA";
-
     @Bean
     DefinitionValidator definitionValidator(ApiorchProperties properties, ExpressionEvaluator evaluator) {
         return new DefinitionValidator(new DefinitionValidator.Settings(DslVersion.CURRENT,
-                properties.run().maxSyncWaitMs(), properties.run().defaultRunTimeoutMs(), DEFAULT_CAPTURE), evaluator);
+                properties.run().maxSyncWaitMs(), properties.run().defaultRunTimeoutMs(),
+                properties.logging().defaultCapture().name() + " (apiorch.logging.default-capture)"), evaluator);
     }
 }

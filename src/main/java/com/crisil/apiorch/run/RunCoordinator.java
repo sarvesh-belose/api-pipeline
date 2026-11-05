@@ -1,5 +1,7 @@
 package com.crisil.apiorch.run;
 
+import java.time.Clock;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -36,9 +38,12 @@ import com.crisil.apiorch.engine.StepStatus;
 import com.crisil.apiorch.expression.ExpressionEvaluator;
 import com.crisil.apiorch.expression.ExpressionException;
 import com.crisil.apiorch.observability.ActivityRecorder;
+import com.crisil.apiorch.observability.ApiorchMetrics;
 import com.crisil.apiorch.observability.ActivityRecorder.StepRef;
 import com.crisil.apiorch.observability.AttemptRecord;
 import com.crisil.apiorch.observability.AttemptWriter;
+import com.crisil.apiorch.observability.MaskingPolicy;
+import com.crisil.apiorch.http.EndpointClientRegistry;
 import com.crisil.apiorch.observability.EventType;
 import com.crisil.apiorch.observability.MdcSupport;
 import com.crisil.apiorch.persistence.RunRows;
@@ -69,14 +74,17 @@ public class RunCoordinator {
     private final RunCompletionNotifier notifier;
     private final ExpressionEvaluator evaluator;
     private final AttemptWriter attempts;
+    private final EndpointClientRegistry endpoints;
+    private final ApiorchProperties.Logging logging;
+    private final ApiorchMetrics metrics;
+    private final Clock clock;
     private final long defaultRunTimeoutMs;
-
-    static final int DEFAULT_MAX_BODY_BYTES = 262_144;
 
     public RunCoordinator(TransactionTemplate tx, RunRows rows, RunLeaseService leases, ActivityRecorder recorder,
             PublishedPipelines pipelines, StepExecutor executor,
             @Qualifier(ExecutorConfig.STEP_IO) ThreadPoolTaskExecutor stepIo, RunCompletionNotifier notifier,
-            ExpressionEvaluator evaluator, AttemptWriter attempts, ApiorchProperties properties) {
+            ExpressionEvaluator evaluator, AttemptWriter attempts, EndpointClientRegistry endpoints,
+            ApiorchMetrics metrics, Clock clock, ApiorchProperties properties) {
         this.tx = tx;
         this.rows = rows;
         this.leases = leases;
@@ -87,6 +95,10 @@ public class RunCoordinator {
         this.notifier = notifier;
         this.evaluator = evaluator;
         this.attempts = attempts;
+        this.endpoints = endpoints;
+        this.logging = properties.logging();
+        this.metrics = metrics;
+        this.clock = clock;
         this.defaultRunTimeoutMs = properties.run().defaultRunTimeoutMs();
     }
 
@@ -111,6 +123,7 @@ public class RunCoordinator {
             scheduled = tx.execute(s -> schedule(lease));
         } catch (LeaseLostException e) {
             log.warn("lease lost runId={} epoch={}", lease.runId(), lease.epoch());
+            metrics.leaseLost();
             return;
         }
         for (StepInvocation invocation : scheduled) {
@@ -175,6 +188,7 @@ public class RunCoordinator {
             } catch (LeaseLostException e) {
                 log.warn("lease lost runId={} epoch={}; {} not sent", invocation.runId(), invocation.lease().epoch(),
                         invocation.step().id());
+                metrics.leaseLost();
                 return;
             } catch (RuntimeException e) {
                 log.error("step executor failed unexpectedly", e);
@@ -192,7 +206,15 @@ public class RunCoordinator {
         } catch (LeaseLostException e) {
             log.warn("lease lost runId={} epoch={}; discarding the result of {}", lease.runId(), lease.epoch(),
                     invocation.step().id());
+            metrics.leaseLost();
             return;
+        }
+        metrics.stepFinished(invocation.pipeline(), invocation.step().id(), invocation.step().definition().endpoint(),
+                outcome.errorCode() != null ? outcome.errorCode() : outcome.status().name(),
+                java.time.Duration.ofMillis(outcome.durationMs()));
+        for (StepAttempt attempt : outcome.trail()) {
+            metrics.attempt(attempt.record().endpointName(), attempt.record().outcome(), attempt.record().requestBytes(),
+                    attempt.record().responseBytes());
         }
         advance(lease);
     }
@@ -242,10 +264,11 @@ public class RunCoordinator {
         PipelineDefinition.LoggingSpec pipelineLogging = definition.logging();
         Capture capture = stepLogging != null && stepLogging.capture() != null ? stepLogging.capture()
                 : pipelineLogging != null && pipelineLogging.capture() != null ? pipelineLogging.capture()
-                : Capture.METADATA;
+                : logging.defaultCapture();
         int maxBody = stepLogging != null && stepLogging.maxBodyBytes() != null ? stepLogging.maxBodyBytes()
                 : pipelineLogging != null && pipelineLogging.maxBodyBytes() != null ? pipelineLogging.maxBodyBytes()
-                : DEFAULT_MAX_BODY_BYTES;
+                : logging.defaultMaxBodyBytes();
+        MaskingPolicy policy = maskingPolicy(invocation.step(), pipelineLogging, stepLogging);
         for (StepAttempt attempt : outcome.trail()) {
             AttemptRecord a = attempt.record();
             StepRef ref = StepRef.attempt(a.stepId(), a.execNo(), a.attemptNo());
@@ -257,8 +280,24 @@ public class RunCoordinator {
                         "durationMs", a.durationMs(), "requestBytes", a.requestBytes(), "responseBytes",
                         a.responseBytes()), null);
             }
-            attempts.write(a, capture, maxBody);
+            attempts.write(a, capture, maxBody, policy);
         }
+    }
+
+    /** The global lists, the pipeline's and step's {@code maskKeys}, and the endpoint's API key header (US-7.3). */
+    private MaskingPolicy maskingPolicy(CompiledStep step, PipelineDefinition.LoggingSpec pipelineLogging,
+            PipelineDefinition.LoggingSpec stepLogging) {
+        List<String> headers = new ArrayList<>(logging.alwaysMaskHeaders());
+        endpoints.get(step.definition().endpoint()).map(r -> r.config().auth())
+                .filter(auth -> auth != null && auth.headerName() != null).ifPresent(auth -> headers.add(auth.headerName()));
+        List<String> keys = new ArrayList<>(logging.alwaysMaskKeys());
+        if (pipelineLogging != null && pipelineLogging.maskKeys() != null) {
+            keys.addAll(pipelineLogging.maskKeys());
+        }
+        if (stepLogging != null && stepLogging.maskKeys() != null) {
+            keys.addAll(stepLogging.maskKeys());
+        }
+        return MaskingPolicy.of(headers, keys);
     }
 
     /** {@code fallback} over the context plus {@code error}; its result becomes {@code steps.<id>.body} (US-4.6). */
@@ -304,6 +343,8 @@ public class RunCoordinator {
             @Override
             public void afterCommit() {
                 log.info("run finished runId={} status={}", runId, logged);
+                metrics.runFinished(run.pipelineCode(), logged.name(), java.time.Duration.between(
+                        run.startedAt() != null ? run.startedAt() : run.createdAt(), Instant.now(clock)));
                 notifier.notifyDone(runId);
             }
         });

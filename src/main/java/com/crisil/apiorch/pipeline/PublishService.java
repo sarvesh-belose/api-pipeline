@@ -31,6 +31,7 @@ import com.crisil.apiorch.definition.DslJsonMapper;
 import com.crisil.apiorch.definition.ValidationReport;
 import com.crisil.apiorch.endpoint.EndpointRepository;
 import com.crisil.apiorch.observability.ApiProblemException;
+import com.crisil.apiorch.observability.ApiorchMetrics;
 import com.crisil.apiorch.persistence.SqlDialect;
 import com.crisil.apiorch.pipeline.dto.VersionResponse;
 import com.crisil.apiorch.pipeline.dto.VersionSummary;
@@ -51,17 +52,20 @@ public class PublishService {
     private final DefinitionBinder binder;
     private final DefinitionValidator validator;
     private final ApplicationEventPublisher events;
+    private final ApiorchMetrics metrics;
     private final long lockTimeoutMs;
     private final boolean requireFourEyes;
 
     public PublishService(JdbcClient jdbc, SqlDialect dialect, EndpointRepository endpoints, Validator beanValidator,
-            DefinitionValidator validator, ApplicationEventPublisher events, ApiorchProperties properties) {
+            DefinitionValidator validator, ApplicationEventPublisher events, ApiorchMetrics metrics,
+            ApiorchProperties properties) {
         this.jdbc = jdbc;
         this.dialect = dialect;
         this.endpoints = endpoints;
         this.binder = new DefinitionBinder(beanValidator, properties.definition().maxSteps());
         this.validator = validator;
         this.events = events;
+        this.metrics = metrics;
         this.lockTimeoutMs = properties.engine().lockTimeoutMs();
         this.requireFourEyes = properties.definition().requireFourEyes();
     }
@@ -150,6 +154,7 @@ public class PublishService {
                 .param("createdBy", draft.createdBy()).param("updatedBy", draft.updatedBy()).param("actor", actor)
                 .update();
         events.publishEvent(new PipelinePublishedEvent(code, version));
+        metrics.definitionPublished(code);
         VersionSummary stored = version(code, version).orElseThrow();
         return new VersionResponse(code, version, checksum, stored.publishedAt(), actor, comment,
                 report.executionPlan(), null);

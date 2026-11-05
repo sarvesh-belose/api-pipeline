@@ -2,9 +2,12 @@
   <!--
     US-1.3 AC4. prod: one JSON object per line (LogstashEncoder 8.1, the Jackson 2 line, ADR-003) with the MDC keys
     correlationId, runId, pipeline, version, stepId, attempt, traceId and spanId. local and test: a readable pattern.
-    US-7.3 adds the masking decorator to the JSON encoder (<jsonGeneratorDecorator>; write a literal comma or "}" in
-    a mask <value> regex as \x2C and \x7D, ADR-003 F11).
+    US-7.3 masking in both layouts: the JSON encoder's MaskingJsonGeneratorDecorator masks the always-mask keys as
+    fields (path) and inside message text (value); a literal comma or "}" in a value regex is written \x2C and \x7D
+    (ADR-003 F11). The pattern layout uses %maskedMsg (MaskingMessageConverter) with the same regexes. Keep the path
+    list and the key alternation in sync with apiorch.logging.always-mask-keys.
   -->
+  <conversionRule conversionWord="maskedMsg" converterClass="com.crisil.apiorch.observability.MaskingMessageConverter"/>
   <springProperty scope="context" name="service" source="spring.application.name" defaultValue="apiorch-service"/>
 
   <springProfile name="prod">
@@ -20,6 +23,23 @@
         <includeMdcKeyName>traceId</includeMdcKeyName>
         <includeMdcKeyName>spanId</includeMdcKeyName>
         <customFields>{"service":"${service}"}</customFields>
+        <jsonGeneratorDecorator class="net.logstash.logback.mask.MaskingJsonGeneratorDecorator">
+          <defaultMask>***</defaultMask>
+          <path>password</path>
+          <path>secret</path>
+          <path>token</path>
+          <path>otp</path>
+          <path>pin</path>
+          <path>clientSecret</path>
+          <path>client_secret</path>
+          <path>accessToken</path>
+          <path>access_token</path>
+          <path>refreshToken</path>
+          <path>refresh_token</path>
+          <value>(?&lt;=[?&amp;]t=)[^&amp;\s]+</value>
+          <value>(?&lt;=Bearer )\S+</value>
+          <value>(?i)(?&lt;=\b(?:password|secret|token|otp|pin|clientSecret|client_secret|accessToken|access_token|refreshToken|refresh_token)=)[^\s\x2C\x7D&amp;"]+</value>
+        </jsonGeneratorDecorator>
       </encoder>
     </appender>
     <root level="INFO"><appender-ref ref="JSON"/></root>
@@ -28,7 +48,7 @@
   <springProfile name="!prod">
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
       <encoder>
-        <pattern>%d{HH:mm:ss.SSS} %-5level [%X{correlationId:-}] [run=%X{runId:-} step=%X{stepId:-}#%X{attempt:-}] %logger{30} - %msg%n</pattern>
+        <pattern>%d{HH:mm:ss.SSS} %-5level [%X{correlationId:-}] [run=%X{runId:-} step=%X{stepId:-}#%X{attempt:-}] %logger{30} - %maskedMsg%n</pattern>
       </encoder>
     </appender>
     <root level="INFO"><appender-ref ref="CONSOLE"/></root>
