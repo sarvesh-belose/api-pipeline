@@ -212,9 +212,15 @@ the definition JSON as saved.
   silently and the step would fall back to the implicit "previous step" dependency, which is
   exactly the reorder bug the DSL is meant to prevent. `DslBindingTest` asserts the mapper's
   setting directly as well as the `400`.
-- `DefinitionService` handles draft CRUD, ETag and If-Match, and calls
-  `DefinitionValidator.validate()` (US-3.2) for the `validation` block.
-- `PipelineAdminController`, `PipelineEntity`, `PipelineDefinitionEntity` and their repositories.
+- **Persistence and API live in `com.crisil.apiorch.pipeline`** (implemented 2026-11-05):
+  `DraftService` handles draft CRUD, ETag and If-Match, and calls `DefinitionValidator.validate()` for
+  the `validation` block; `PipelineAdminController`, `PipelineEntity`, `PipelineDefinitionEntity` and
+  their repositories sit beside it. They cannot be in `definition`, because the US-1.1 architecture
+  rule keeps `definition` free of JDBC and repositories so the dry run (US-3.5) can reuse it.
+  `definition` holds the records, `DslJsonMapper`, `DefinitionBinder` (structure, JSON pointers) and
+  `DefinitionValidator` (the US-3.1 semantic subset: unknown steps, cycles, unknown endpoints,
+  duplicate ids, required `fallback`/`callback`, `DSL_VERSION_UNSUPPORTED`, list-order warnings).
+  US-3.2 adds expression compilation, reorder safety and feature gates.
 
 **Test notes**
 - `DslBindingTest` uses golden JSON: valid, unknown field, bad id, bad code, too many steps, an
@@ -223,7 +229,8 @@ the definition JSON as saved.
 - `DraftApiIT` covers create, already-exists, PUT create and replace, If-Match 409/428, list
   (with the ops role), get and delete (AC1, AC2, AC5).
 - `DraftSaveWarningsIT` covers AC4.
-- `JsonataSpikeTest` keeps the spike's executable findings: thread safety under 32 threads,
+- `JsonataSpikeTest` (with `GuardedJsonataEvaluator`, US-3.2/US-4.3; until then the executable
+  findings stay in `tools/stack-probe-b35-mssql` and ADR-002) keeps the spike's executable findings: thread safety under 32 threads,
   bounds, and number precision. It includes a **hostile expression suite** — unbounded recursion,
   a large cross-product, deep nesting and a pathological string build — and asserts that each one
   is aborted within the budget rather than running to exhaustion. If any of them cannot be aborted,

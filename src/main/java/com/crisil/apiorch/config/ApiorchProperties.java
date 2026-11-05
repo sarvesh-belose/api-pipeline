@@ -32,7 +32,9 @@ public record ApiorchProperties(
     }
 
     /** US-3.1. */
-    public record Definition(@DefaultValue("524288") @Min(1024) long maxDocumentBytes) {
+    public record Definition(
+            @DefaultValue("524288") @Min(1024) long maxDocumentBytes,
+            @DefaultValue("50") @Min(1) @Max(500) int maxSteps) {
     }
 
     /** US-4.1. */
