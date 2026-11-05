@@ -51,6 +51,14 @@ public class TestEndpoints {
         throw new IllegalStateException("secret internal detail com.crisil.apiorch.Internal");
     }
 
+    @GetMapping("/api/v1/test/async-fail")
+    public java.util.concurrent.CompletableFuture<Map<String, Object>> asyncFail() {
+        return java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+            throw new com.crisil.apiorch.observability.ApiProblemException(
+                    org.springframework.http.HttpStatus.CONFLICT, "illegal-run-state", "failed on another thread");
+        });
+    }
+
     @GetMapping("/api/v1/test/slow")
     public Map<String, Object> slow() throws InterruptedException {
         Thread.sleep(1500);

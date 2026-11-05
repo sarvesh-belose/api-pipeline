@@ -1,0 +1,36 @@
+<configuration>
+  <!--
+    US-1.3 AC4. prod: one JSON object per line (LogstashEncoder 8.1, the Jackson 2 line, ADR-003) with the MDC keys
+    correlationId, runId, pipeline, version, stepId, attempt, traceId and spanId. local and test: a readable pattern.
+    US-7.3 adds the masking decorator to the JSON encoder (<jsonGeneratorDecorator>; write a literal comma or "}" in
+    a mask <value> regex as \x2C and \x7D, ADR-003 F11).
+  -->
+  <springProperty scope="context" name="service" source="spring.application.name" defaultValue="apiorch-service"/>
+
+  <springProfile name="prod">
+    <appender name="JSON" class="ch.qos.logback.core.ConsoleAppender">
+      <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+        <shortenedLoggerNameLength>36</shortenedLoggerNameLength>
+        <includeMdcKeyName>correlationId</includeMdcKeyName>
+        <includeMdcKeyName>runId</includeMdcKeyName>
+        <includeMdcKeyName>pipeline</includeMdcKeyName>
+        <includeMdcKeyName>version</includeMdcKeyName>
+        <includeMdcKeyName>stepId</includeMdcKeyName>
+        <includeMdcKeyName>attempt</includeMdcKeyName>
+        <includeMdcKeyName>traceId</includeMdcKeyName>
+        <includeMdcKeyName>spanId</includeMdcKeyName>
+        <customFields>{"service":"${service}"}</customFields>
+      </encoder>
+    </appender>
+    <root level="INFO"><appender-ref ref="JSON"/></root>
+  </springProfile>
+
+  <springProfile name="!prod">
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+      <encoder>
+        <pattern>%d{HH:mm:ss.SSS} %-5level [%X{correlationId:-}] [run=%X{runId:-} step=%X{stepId:-}#%X{attempt:-}] %logger{30} - %msg%n</pattern>
+      </encoder>
+    </appender>
+    <root level="INFO"><appender-ref ref="CONSOLE"/></root>
+  </springProfile>
+</configuration>
