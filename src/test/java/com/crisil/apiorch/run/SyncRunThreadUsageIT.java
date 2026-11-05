@@ -60,7 +60,8 @@ class SyncRunThreadUsageIT {
             }
             return StepOutcome.succeeded(200, null, null, 1, 2000);
         });
-        HttpClient client = HttpClient.newBuilder().executor(java.util.concurrent.Executors.newFixedThreadPool(64)).build();
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(64);
+        HttpClient client = HttpClient.newBuilder().executor(pool).build();
         String token = TestJwt.token("crm", Roles.RUN);
         long start = System.nanoTime();
         List<CompletableFuture<HttpResponse<String>>> calls = new ArrayList<>();
@@ -74,5 +75,6 @@ class SyncRunThreadUsageIT {
             assertThat(call.get(30, TimeUnit.SECONDS).statusCode()).isEqualTo(200);
         }
         assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofSeconds(6));
+        pool.shutdownNow();
     }
 }

@@ -49,7 +49,8 @@ public record ApiorchProperties(
             @DefaultValue("10000") @Min(0) long defaultSyncWaitMs,
             @DefaultValue("30000") @Min(0) long maxSyncWaitMs,
             @DefaultValue("60000") @Min(1000) long defaultRunTimeoutMs,
-            @DefaultValue("false") boolean allowVersionOverride) {
+            @DefaultValue("false") boolean allowVersionOverride,
+            @DefaultValue("5242880") @Min(1024) long maxResponseBytes) {
     }
 
     /** US-5.5. Lease arithmetic uses database time. */
