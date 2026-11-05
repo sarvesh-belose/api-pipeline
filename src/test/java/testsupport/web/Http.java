@@ -29,9 +29,25 @@ public final class Http {
     }
 
     public HttpResponse<String> postJson(String path, String json) throws Exception {
-        return client.send(HttpRequest.newBuilder(URI.create(base + path))
+        return send("POST", path, json, null);
+    }
+
+    public HttpResponse<String> putJson(String path, String json, String ifMatch) throws Exception {
+        return send("PUT", path, json, ifMatch);
+    }
+
+    public HttpResponse<String> delete(String path) throws Exception {
+        return client.send(HttpRequest.newBuilder(URI.create(base + path)).DELETE().build(), BodyHandlers.ofString());
+    }
+
+    public HttpResponse<String> send(String method, String path, String json, String ifMatch) throws Exception {
+        HttpRequest.Builder b = HttpRequest.newBuilder(URI.create(base + path))
                 .header("Content-Type", "application/json")
-                .POST(BodyPublishers.ofString(json)).build(), BodyHandlers.ofString());
+                .method(method, json == null ? BodyPublishers.noBody() : BodyPublishers.ofString(json));
+        if (ifMatch != null) {
+            b.header("If-Match", ifMatch);
+        }
+        return client.send(b.build(), BodyHandlers.ofString());
     }
 
     /** POST without a Content-Length, so the body is sent chunked. */

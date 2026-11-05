@@ -25,10 +25,9 @@ class GracefulShutdownIT {
     void inFlightRequestFinishesDuringShutdown() throws Exception {
         ConfigurableApplicationContext ctx = new SpringApplicationBuilder(ApiorchApplication.class, TestEndpoints.class)
                 .profiles("test")
-                .properties("server.port=0", "management.server.port=0",
-                        "spring.datasource.url=jdbc:h2:mem:shutdown;MODE=MSSQLServer;DATABASE_TO_UPPER=FALSE;"
-                                + "CASE_INSENSITIVE_IDENTIFIERS=TRUE;DB_CLOSE_DELAY=-1")
-                .run();
+                .run("--server.port=0", "--management.server.port=0",
+                        "--spring.datasource.url=jdbc:h2:mem:shutdown;MODE=MSSQLServer;DATABASE_TO_UPPER=FALSE;"
+                                + "CASE_INSENSITIVE_IDENTIFIERS=TRUE;DB_CLOSE_DELAY=-1");
         int port = ((WebServerApplicationContext) ctx).getWebServer().getPort();
         Http http = new Http(port);
 

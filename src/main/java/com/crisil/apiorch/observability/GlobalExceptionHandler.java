@@ -35,7 +35,12 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
     @ExceptionHandler(ApiProblemException.class)
     ResponseEntity<Object> handleApiProblem(ApiProblemException ex, WebRequest request) {
-        return respond(Problems.of(ex.status(), ex.slug(), ex.getMessage()), new HttpHeaders(), request);
+        ProblemDetail problem = Problems.of(ex.status(), ex.slug(), ex.getMessage());
+        if (ex instanceof ValidationFailedException vf) {
+            problem.setProperty("errors", vf.errors());
+        }
+        ex.properties().forEach(problem::setProperty);
+        return respond(problem, new HttpHeaders(), request);
     }
 
     @ExceptionHandler(PayloadTooLargeException.class)
