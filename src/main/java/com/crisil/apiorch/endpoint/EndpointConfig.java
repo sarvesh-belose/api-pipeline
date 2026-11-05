@@ -3,6 +3,7 @@ package com.crisil.apiorch.endpoint;
 import java.time.Instant;
 import java.util.UUID;
 
+import com.crisil.apiorch.endpoint.dto.EndpointRequest;
 import com.crisil.apiorch.endpoint.dto.EndpointRequest.AuthType;
 import com.crisil.apiorch.endpoint.dto.EndpointRequest.Backoff;
 import com.crisil.apiorch.endpoint.dto.EndpointRequest.HttpVersion;
@@ -22,7 +23,7 @@ public record EndpointConfig(
         int readTimeoutMs,
         HttpVersion httpVersion,
         boolean enabled,
-        AuthType authType,
+        EndpointRequest.Auth auth,
         CircuitBreaker circuitBreaker,
         Bulkhead bulkhead,
         Retry retry,
@@ -31,6 +32,10 @@ public record EndpointConfig(
         String createdBy,
         Instant updatedAt,
         String updatedBy) {
+
+    public AuthType authType() {
+        return auth.type();
+    }
 
     public record CircuitBreaker(int slidingWindowSize, int minimumCalls, int failureRateThreshold,
             int slowCallDurationMs, int slowCallRateThreshold, int waitInOpenMs, int halfOpenCalls,

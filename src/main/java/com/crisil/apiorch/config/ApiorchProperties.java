@@ -25,7 +25,8 @@ public record ApiorchProperties(
         @Valid @DefaultValue Run run,
         @Valid @DefaultValue Callback callback,
         @Valid @DefaultValue Endpoints endpoints,
-        @Valid @DefaultValue Resilience resilience) {
+        @Valid @DefaultValue Resilience resilience,
+        @Valid @DefaultValue Secrets secrets) {
 
     /** US-1.3. */
     public record Correlation(@DefaultValue("X-Correlation-Id") @NotBlank @Pattern(regexp = "[A-Za-z0-9-]+") String header) {
@@ -53,6 +54,13 @@ public record ApiorchProperties(
             @DefaultValue("false") boolean allowHttp,
             @DefaultValue List<@NotBlank String> allowedHosts,
             @DefaultValue("10000") @Min(100) long refreshIntervalMs) {
+    }
+
+    /** US-2.2: where secret references may point, and how long resolved values are cached. */
+    public record Secrets(
+            @DefaultValue("APIORCH_SECRET_") @NotBlank String envPrefix,
+            @DefaultValue("/run/secrets") @NotBlank String fileDir,
+            @DefaultValue("300000") @Min(0) long cacheTtlMs) {
     }
 
     /** US-5.2 to US-5.4: the defaults an endpoint inherits for any resilience setting it does not declare. */

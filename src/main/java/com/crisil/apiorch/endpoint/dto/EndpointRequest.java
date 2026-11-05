@@ -29,8 +29,36 @@ public record EndpointRequest(
 
     public enum AuthType { NONE, API_KEY, BEARER, BASIC, OAUTH2_CLIENT_CREDENTIALS }
 
-    /** US-2.2 adds the per-type fields; until then only {@code NONE} is accepted. */
-    public record Auth(@NotNull AuthType type) {
+    /**
+     * Downstream auth (US-2.2). Secrets are references only ({@code env:NAME} or {@code file:/path}) in the
+     * {@code *Ref} fields. {@code secret}, {@code password} and {@code clientSecret} exist only so a literal secret
+     * is rejected with a clear message instead of as an unknown field (AC2); they are never stored.
+     */
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    public record Auth(
+            @NotNull AuthType type,
+            @Pattern(regexp = "^[A-Za-z0-9-]{1,64}$", message = "must be a header name") String headerName,
+            @Size(max = 512) String secretRef,
+            @Size(max = 256) String username,
+            @Size(max = 512) String passwordRef,
+            @Size(max = 2048) String tokenUrl,
+            @Size(max = 256) String clientId,
+            @Size(max = 512) String clientSecretRef,
+            @Size(max = 1024) String scope,
+            @Size(max = 1024) String audience,
+            String secret,
+            String password,
+            String clientSecret) {
+
+        public static Auth none() {
+            return new Auth(AuthType.NONE, null, null, null, null, null, null, null, null, null, null, null, null);
+        }
+
+        /** The stored form: references and non-secret fields only. */
+        public Auth withoutLiterals() {
+            return new Auth(type, headerName, secretRef, username, passwordRef, tokenUrl, clientId, clientSecretRef,
+                    scope, audience, null, null, null);
+        }
     }
 
     public record Resilience(@Valid CircuitBreaker circuitBreaker, @Valid Bulkhead bulkhead, @Valid Retry retry) {

@@ -14,7 +14,7 @@ public record EndpointResponse(
         int readTimeoutMs,
         EndpointRequest.HttpVersion httpVersion,
         boolean enabled,
-        Auth auth,
+        EndpointRequest.Auth auth,
         Resilience resilience,
         long version,
         Instant createdAt,
@@ -22,16 +22,13 @@ public record EndpointResponse(
         Instant updatedAt,
         String updatedBy) {
 
-    public record Auth(EndpointRequest.AuthType type) {
-    }
-
     public record Resilience(EndpointConfig.CircuitBreaker circuitBreaker, EndpointConfig.Bulkhead bulkhead,
             EndpointConfig.Retry retry) {
     }
 
     public static EndpointResponse of(EndpointConfig c) {
         return new EndpointResponse(c.name(), c.description(), c.baseUrl(), c.healthPath(), c.connectTimeoutMs(),
-                c.readTimeoutMs(), c.httpVersion(), c.enabled(), new Auth(c.authType()),
+                c.readTimeoutMs(), c.httpVersion(), c.enabled(), c.auth(),
                 new Resilience(c.circuitBreaker(), c.bulkhead(), c.retry()), c.version(), c.createdAt(),
                 c.createdBy(), c.updatedAt(), c.updatedBy());
     }

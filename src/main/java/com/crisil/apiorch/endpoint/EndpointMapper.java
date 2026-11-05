@@ -8,7 +8,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.crisil.apiorch.config.ApiorchProperties;
 import com.crisil.apiorch.config.ApiorchProperties.Resilience.Defaults;
 import com.crisil.apiorch.endpoint.dto.EndpointRequest;
-import com.crisil.apiorch.endpoint.dto.EndpointRequest.AuthType;
 import com.crisil.apiorch.endpoint.dto.EndpointRequest.Backoff;
 import com.crisil.apiorch.endpoint.dto.EndpointRequest.HttpVersion;
 
@@ -32,9 +31,9 @@ public class EndpointMapper {
         entity.setReadTimeoutMs(request.readTimeoutMs());
         entity.setHttpVersion((request.httpVersion() != null ? request.httpVersion() : HttpVersion.HTTP_1_1).name());
         entity.setEnabled(request.enabled() == null || request.enabled());
-        AuthType authType = request.auth() != null ? request.auth().type() : AuthType.NONE;
-        entity.setAuthType(authType.name());
-        entity.setAuthConfig(write(request.auth() != null ? request.auth() : new EndpointRequest.Auth(AuthType.NONE)));
+        EndpointRequest.Auth auth = request.auth() != null ? request.auth().withoutLiterals() : EndpointRequest.Auth.none();
+        entity.setAuthType(auth.type().name());
+        entity.setAuthConfig(write(auth));
         entity.setResilienceConfig(request.resilience() != null ? write(request.resilience()) : null);
     }
 
@@ -43,7 +42,8 @@ public class EndpointMapper {
                 ? read(e.getResilienceConfig(), EndpointRequest.Resilience.class) : null;
         return new EndpointConfig(e.getId(), e.getName(), e.getDescription(), e.getBaseUrl(), e.getHealthPath(),
                 e.getConnectTimeoutMs(), e.getReadTimeoutMs(), HttpVersion.valueOf(e.getHttpVersion()), e.isEnabled(),
-                AuthType.valueOf(e.getAuthType()),
+                e.getAuthConfig() != null ? read(e.getAuthConfig(), EndpointRequest.Auth.class)
+                        : EndpointRequest.Auth.none(),
                 circuitBreaker(r != null ? r.circuitBreaker() : null),
                 bulkhead(r != null ? r.bulkhead() : null),
                 retry(r != null ? r.retry() : null),
