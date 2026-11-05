@@ -59,6 +59,13 @@ public class TestEndpoints {
         });
     }
 
+    @PostMapping("/api/v1/test/accepted")
+    public org.springframework.http.ResponseEntity<Void> accepted() {
+        return org.springframework.http.ResponseEntity.accepted().location(
+                org.springframework.web.servlet.support.ServletUriComponentsBuilder.fromCurrentContextPath()
+                        .path("/api/v1/runs/{id}").buildAndExpand("r-1").toUri()).build();
+    }
+
     @GetMapping("/api/v1/test/slow")
     public Map<String, Object> slow() throws InterruptedException {
         Thread.sleep(1500);

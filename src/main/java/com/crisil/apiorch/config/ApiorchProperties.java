@@ -43,8 +43,11 @@ public record ApiorchProperties(
     public record Run(@DefaultValue("1048576") @Min(1024) long maxInputBytes) {
     }
 
-    /** US-6.2. */
-    public record Callback(@DefaultValue("1048576") @Min(1024) long maxBodyBytes) {
+    /** US-6.1, US-6.2 and the US-1.4 public-address guard. */
+    public record Callback(
+            @DefaultValue("1048576") @Min(1024) long maxBodyBytes,
+            String publicBaseUrl,
+            String expectedPublicHost) {
     }
 
     /**

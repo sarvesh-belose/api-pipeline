@@ -113,6 +113,8 @@ public class SecurityConfig {
                 .requestMatchers("/api/v1/admin/**").hasRole(ADMIN)
                 .requestMatchers("/api/**").authenticated()
                 .requestMatchers("/error").permitAll()
+                // US-1.4 AC5: actuator is not served on the API port; let MVC answer 404 instead of 403
+                .requestMatchers("/actuator", "/actuator/**").permitAll()
                 .anyRequest().denyAll())
                 .exceptionHandling(e -> e.authenticationEntryPoint(handlers).accessDeniedHandler(handlers));
         if (settings.mode() == Mode.DEV) {
