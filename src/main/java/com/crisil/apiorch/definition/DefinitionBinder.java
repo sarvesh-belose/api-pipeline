@@ -40,7 +40,7 @@ public final class DefinitionBinder {
 
     public Result bind(JsonNode document, String pointerPrefix) {
         if (document == null || !document.isObject()) {
-            return new Result(null, List.of(new DefinitionIssue("STRUCTURE", pointerPrefix, "must be a JSON object")));
+            return new Result(null, List.of(DefinitionIssue.error("SCHEMA_INVALID", null, pointerPrefix, "must be a JSON object")));
         }
         PipelineDefinition definition;
         try {
@@ -50,13 +50,13 @@ public final class DefinitionBinder {
         }
         List<DefinitionIssue> errors = new ArrayList<>();
         for (ConstraintViolation<PipelineDefinition> v : validator.validate(definition)) {
-            errors.add(new DefinitionIssue("STRUCTURE", pointerPrefix + pointer(v.getPropertyPath()), v.getMessage()));
+            errors.add(DefinitionIssue.error("SCHEMA_INVALID", null, pointerPrefix + pointer(v.getPropertyPath()), v.getMessage()));
         }
         if (definition.steps() != null && definition.steps().size() > maxSteps) {
-            errors.add(new DefinitionIssue("TOO_MANY_STEPS", pointerPrefix + "/steps",
+            errors.add(DefinitionIssue.error("TOO_MANY_STEPS", null, pointerPrefix + "/steps",
                     "has " + definition.steps().size() + " steps; the limit is " + maxSteps));
         }
-        errors.sort(Comparator.comparing(DefinitionIssue::pointer));
+        errors.sort(Comparator.comparing(DefinitionIssue::path));
         return new Result(errors.isEmpty() ? definition : null, errors);
     }
 
@@ -81,7 +81,7 @@ public final class DefinitionBinder {
         } else {
             message = "is not valid";
         }
-        return new DefinitionIssue("STRUCTURE", pointer, message);
+        return DefinitionIssue.error("SCHEMA_INVALID", null, pointer, message);
     }
 
     /** {@code steps[2].id} becomes {@code /steps/2/id}. */

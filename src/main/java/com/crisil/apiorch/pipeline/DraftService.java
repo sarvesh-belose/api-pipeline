@@ -5,10 +5,8 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
 import java.time.Instant;
-import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
-import java.util.Set;
 
 import jakarta.validation.Validator;
 
@@ -27,7 +25,6 @@ import com.crisil.apiorch.definition.DefinitionBinder;
 import com.crisil.apiorch.definition.DefinitionIssue;
 import com.crisil.apiorch.definition.DefinitionValidator;
 import com.crisil.apiorch.definition.DslJsonMapper;
-import com.crisil.apiorch.definition.DslVersion;
 import com.crisil.apiorch.definition.PipelineDefinition;
 import com.crisil.apiorch.definition.StepDefinition;
 import com.crisil.apiorch.definition.ValidationReport;
@@ -58,12 +55,13 @@ public class DraftService {
     private final Clock clock;
 
     public DraftService(PipelineRepository pipelines, PipelineDefinitionRepository definitions,
-            EndpointRepository endpoints, Validator beanValidator, ApiorchProperties properties, Clock clock) {
+            EndpointRepository endpoints, Validator beanValidator, DefinitionValidator validator, Clock clock,
+            ApiorchProperties properties) {
         this.pipelines = pipelines;
         this.definitions = definitions;
         this.endpoints = endpoints;
         this.binder = new DefinitionBinder(beanValidator, properties.definition().maxSteps());
-        this.validator = new DefinitionValidator(DslVersion.CURRENT);
+        this.validator = validator;
         this.clock = clock;
     }
 
@@ -158,13 +156,11 @@ public class DraftService {
     }
 
     private ValidationReport validate(PipelineDefinition definition) {
-        Set<String> known = new HashSet<>();
-        endpoints.findAllVersions().forEach(v -> known.add(v.getName()));
-        return validator.validate(definition, known, POINTER);
+        return validator.validate(definition, EndpointStates.of(endpoints));
     }
 
     private static ValidationFailedException invalid(List<DefinitionIssue> issues) {
-        return new ValidationFailedException(issues.stream().map(i -> new FieldError(i.pointer(), i.message())).toList());
+        return new ValidationFailedException(issues.stream().map(i -> new FieldError(i.path(), i.message())).toList());
     }
 
     private PipelineEntity pipeline(String code) {

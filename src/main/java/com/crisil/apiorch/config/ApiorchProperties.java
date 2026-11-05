@@ -27,7 +27,8 @@ public record ApiorchProperties(
         @Valid @DefaultValue Endpoints endpoints,
         @Valid @DefaultValue Resilience resilience,
         @Valid @DefaultValue Secrets secrets,
-        @Valid @DefaultValue Security security) {
+        @Valid @DefaultValue Security security,
+        @Valid @DefaultValue Expression expression) {
 
     /** US-1.3. */
     public record Correlation(@DefaultValue("X-Correlation-Id") @NotBlank @Pattern(regexp = "[A-Za-z0-9-]+") String header) {
@@ -40,7 +41,20 @@ public record ApiorchProperties(
     }
 
     /** US-4.1. */
-    public record Run(@DefaultValue("1048576") @Min(1024) long maxInputBytes) {
+    public record Run(
+            @DefaultValue("1048576") @Min(1024) long maxInputBytes,
+            @DefaultValue("10000") @Min(0) long defaultSyncWaitMs,
+            @DefaultValue("30000") @Min(0) long maxSyncWaitMs,
+            @DefaultValue("60000") @Min(1000) long defaultRunTimeoutMs,
+            @DefaultValue("false") boolean allowVersionOverride) {
+    }
+
+    /** US-3.2, US-4.3 (ADR-002 D2, D4). The wall-clock budget is validated at 500–5000 ms. */
+    public record Expression(
+            @DefaultValue("1000") @Min(500) @Max(5000) long timeoutMs,
+            @DefaultValue("200") @Min(10) @Max(10000) int maxDepth,
+            @DefaultValue("4096") @Min(64) int maxLength,
+            @DefaultValue("64") @Min(4) int maxNesting) {
     }
 
     /** US-6.1, US-6.2 and the US-1.4 public-address guard. */

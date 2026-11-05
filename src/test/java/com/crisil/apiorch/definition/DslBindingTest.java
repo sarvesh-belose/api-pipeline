@@ -3,7 +3,6 @@ package com.crisil.apiorch.definition;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.InputStream;
-import java.util.Set;
 
 import jakarta.validation.Validation;
 import jakarta.validation.Validator;
@@ -61,7 +60,7 @@ class DslBindingTest {
         DefinitionBinder.Result result = bind(doc);
         assertThat(result.ok()).isFalse();
         assertThat(result.errors()).singleElement().satisfies(e -> {
-            assertThat(e.pointer()).isEqualTo("/definition/steps/2/dependOn");
+            assertThat(e.path()).isEqualTo("/definition/steps/2/dependOn");
             assertThat(e.message()).contains("unknown field 'dependOn'");
         });
     }
@@ -70,7 +69,7 @@ class DslBindingTest {
     void missingStepsAndStepFieldsAreListed() throws Exception {
         ObjectNode noSteps = golden();
         noSteps.remove("steps");
-        assertThat(bind(noSteps).errors()).extracting(DefinitionIssue::pointer).containsExactly("/definition/steps");
+        assertThat(bind(noSteps).errors()).extracting(DefinitionIssue::path).containsExactly("/definition/steps");
 
         ObjectNode doc = golden();
         ObjectNode step = (ObjectNode) doc.withArray("steps").get(1);
@@ -78,7 +77,7 @@ class DslBindingTest {
         step.remove("method");
         step.put("path", "kyc");
         step.put("id", "Bad-Id");
-        assertThat(bind(doc).errors()).extracting(DefinitionIssue::pointer).containsExactly(
+        assertThat(bind(doc).errors()).extracting(DefinitionIssue::path).containsExactly(
                 "/definition/steps/1/endpoint", "/definition/steps/1/id", "/definition/steps/1/method",
                 "/definition/steps/1/path");
     }
@@ -88,7 +87,7 @@ class DslBindingTest {
         ObjectNode doc = golden();
         doc.put("code", "onboard");
         ((ArrayNode) doc.get("allowedCallers")).add("");
-        assertThat(bind(doc).errors()).extracting(DefinitionIssue::pointer)
+        assertThat(bind(doc).errors()).extracting(DefinitionIssue::path)
                 .containsExactly("/definition/allowedCallers/2", "/definition/code");
     }
 
@@ -97,12 +96,12 @@ class DslBindingTest {
         ObjectNode doc = golden();
         ((ObjectNode) doc.withArray("steps").get(0)).put("method", "FETCH");
         DefinitionIssue issue = bind(doc).errors().get(0);
-        assertThat(issue.pointer()).isEqualTo("/definition/steps/0/method");
+        assertThat(issue.path()).isEqualTo("/definition/steps/0/method");
         assertThat(issue.message()).contains("FETCH", "POST");
 
         ObjectNode typed = golden();
         typed.put("runTimeoutMs", "soon");
-        assertThat(bind(typed).errors().get(0).pointer()).isEqualTo("/definition/runTimeoutMs");
+        assertThat(bind(typed).errors().get(0).path()).isEqualTo("/definition/runTimeoutMs");
 
         assertThat(bind(DslJsonMapper.get().createArrayNode()).errors().get(0).message()).contains("JSON object");
         assertThat(bind(null).ok()).isFalse();
@@ -124,18 +123,22 @@ class DslBindingTest {
         doc.remove("dslVersion");
         PipelineDefinition absent = bind(doc).definition();
         assertThat(absent.effectiveDslVersion()).isEqualTo(1);
-        DefinitionValidator validator = new DefinitionValidator(DslVersion.CURRENT);
-        Set<String> endpoints = Set.of("customer-svc", "kyc-svc", "score-svc", "account-svc", "notify-svc");
-        assertThat(validator.validate(absent, endpoints, "/definition").valid()).isTrue();
+        DefinitionValidator validator = new DefinitionValidator(new DefinitionValidator.Settings(DslVersion.CURRENT,
+                30000, 60000, "METADATA"), new testsupport.engine.FakeExpressionEvaluator());
+        java.util.Map<String, Boolean> endpoints = java.util.Map.of("customer-svc", true, "kyc-svc", true,
+                "score-svc", true, "account-svc", true, "notify-svc", true);
+        assertThat(validator.validate(absent, endpoints).errors()).extracting(DefinitionIssue::code)
+                .doesNotContain("DSL_VERSION_UNSUPPORTED");
 
         doc.put("dslVersion", 2);
-        ValidationReport tooHigh = validator.validate(bind(doc).definition(), endpoints, "/definition");
-        assertThat(tooHigh.errors()).singleElement().satisfies(e -> {
+        ValidationReport tooHigh = validator.validate(bind(doc).definition(), endpoints);
+        assertThat(tooHigh.errors()).filteredOn(e -> e.code().equals("DSL_VERSION_UNSUPPORTED")).singleElement()
+                .satisfies(e -> {
             assertThat(e.code()).isEqualTo("DSL_VERSION_UNSUPPORTED");
             assertThat(e.message()).contains("2", "1");
         });
 
         doc.put("dslVersion", 0);
-        assertThat(bind(doc).errors()).extracting(DefinitionIssue::pointer).containsExactly("/definition/dslVersion");
+        assertThat(bind(doc).errors()).extracting(DefinitionIssue::path).containsExactly("/definition/dslVersion");
     }
 }

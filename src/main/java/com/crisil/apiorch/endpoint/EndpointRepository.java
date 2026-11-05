@@ -19,6 +19,15 @@ public interface EndpointRepository extends JpaRepository<EndpointEntity, UUID> 
     @Query("select e.name as name, e.rowVersion as rowVersion from EndpointEntity e")
     List<NameAndVersion> findAllVersions();
 
+    @Query("select e.name as name, e.enabled as enabled from EndpointEntity e")
+    List<NameAndEnabled> findAllStates();
+
+    interface NameAndEnabled {
+        String getName();
+
+        boolean getEnabled();
+    }
+
     interface NameAndVersion {
         String getName();
 

@@ -37,9 +37,8 @@ class DraftSaveWarningsIT {
         JsonNode validation = json.readTree(res.body()).path("validation");
         assertThat(validation.path("valid").asBoolean()).isFalse();
         assertThat(validation.path("errors").findValuesAsText("code")).contains("DSL_VERSION_UNSUPPORTED",
-                "UNKNOWN_STEP", "UNKNOWN_ENDPOINT");
-        assertThat(validation.path("errors").findValuesAsText("pointer")).contains("/definition/steps/0/dependsOn/0",
-                "/definition/dslVersion");
+                "UNKNOWN_DEPENDENCY", "UNKNOWN_ENDPOINT");
+        assertThat(validation.path("errors").findValuesAsText("path")).contains("/steps/0/dependsOn/0", "/dslVersion");
         assertThat(http.get("/api/v1/admin/pipelines/WARN_PIPELINE/draft").statusCode()).isEqualTo(200);
     }
 }

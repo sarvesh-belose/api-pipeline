@@ -14,11 +14,13 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.crisil.apiorch.pipeline.dto.DraftRequest;
 import com.crisil.apiorch.pipeline.dto.DraftResponse;
 import com.crisil.apiorch.pipeline.dto.PipelineSummary;
+import com.crisil.apiorch.pipeline.dto.ValidateResponse;
 import com.crisil.apiorch.security.CurrentActor;
 import com.crisil.apiorch.web.ETags;
 
@@ -28,11 +30,21 @@ import com.crisil.apiorch.web.ETags;
 public class PipelineAdminController {
 
     private final DraftService drafts;
+    private final ValidateService validation;
     private final CurrentActor actor;
 
-    public PipelineAdminController(DraftService drafts, CurrentActor actor) {
+    public PipelineAdminController(DraftService drafts, ValidateService validation, CurrentActor actor) {
         this.drafts = drafts;
+        this.validation = validation;
         this.actor = actor;
+    }
+
+    /** US-3.2: validate the draft, or the definition in the body, without saving. */
+    @PostMapping("/{code}/validate")
+    public ValidateResponse validate(@PathVariable String code,
+            @RequestBody(required = false) com.fasterxml.jackson.databind.JsonNode body,
+            @RequestParam(name = "detail", defaultValue = "false") boolean detail) {
+        return validation.validate(code, body, detail);
     }
 
     @PostMapping
