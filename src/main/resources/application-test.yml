@@ -7,3 +7,7 @@ spring:
     hikari.maximum-pool-size: 10
 management:
   server.port: 0   # random, so parallel local test runs do not collide
+apiorch:
+  endpoints:
+    allow-http: true
+    allowed-hosts: [localhost, "*.example.com"]

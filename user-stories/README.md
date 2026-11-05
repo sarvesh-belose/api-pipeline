@@ -471,6 +471,8 @@ systems.
 | `run-on-legal-hold` | 409 |
 | `endpoint-not-found` | 404 |
 | `not-found` | 404 |
+| `method-not-allowed` | 405 |
+| `not-acceptable` | 406 |
 | `already-exists` | 409 |
 | `endpoint-in-use` | 409 |
 | `version-conflict` | 409 |
@@ -481,10 +483,12 @@ systems.
 | `pipeline-disabled` | 409 |
 | `callback-not-expected` | 409 |
 | `payload-too-large` | 413 |
+| `unsupported-media-type` | 415 |
 | `definition-invalid` | 422 |
 | `idempotency-key-reuse` | 422 |
 | `precondition-required` | 428 |
 | `admission-rejected` | 429 |
+| `internal-error` | 500 |
 | `shutting-down` | 503 |
 
 ## 10. Data model (SQL Server 2022; H2 2.3 MSSQL mode for dev and test)
@@ -501,7 +505,7 @@ systems.
   and `step_id` already do on `run_event`.
 - Nullable unique keys, such as `pipeline_run.idempotency_key`, are vendor migrations. SQL Server
   uses a filtered unique index (`WHERE … IS NOT NULL`), because it allows only one NULL in a
-  unique index; H2 uses a plain unique index (ADR-003 F16).
+  unique index; H2 in MSSQL mode also treats NULLs as equal, so it uses `CREATE UNIQUE NULLS DISTINCT INDEX` (ADR-003 F16, corrected).
 - Migrations live in `db/migration/common` (shared DDL) and `db/migration/{vendor}`
   (`sqlserver/`: partitioning, `ISJSON`, roles, grants, filtered indexes; `h2/`: plain
   equivalents plus the `SYSUTCDATETIME()` shim). Version numbers are global, and a vendor file

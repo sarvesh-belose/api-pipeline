@@ -1,0 +1,28 @@
+{
+  "dslVersion": 1,
+  "code": "CUSTOMER_ONBOARD",
+  "description": "Onboard a retail customer",
+  "allowedCallers": ["crm-system", "branch-portal"],
+  "input": { "required": ["name", "pan"], "validWhen": "$length(pan) = 10" },
+  "runTimeoutMs": 30000,
+  "syncWaitMs": 10000,
+  "logging": { "capture": "FULL", "maxBodyBytes": 262144, "maskKeys": ["pan", "aadhaar", "customer.dob"] },
+  "defaults": { "timeoutMs": 5000, "retry": { "maxAttempts": 3, "backoff": "EXPONENTIAL_JITTER", "initialMs": 200, "maxMs": 2000 } },
+  "steps": [
+    { "id": "api1", "endpoint": "customer-svc", "method": "POST", "path": "/customers", "idempotent": true,
+      "body": "{ 'name': input.name, 'pan': input.pan }",
+      "compensate": { "method": "DELETE", "path": "/customers/{steps.api1.body.id}" } },
+    { "id": "api2", "endpoint": "kyc-svc", "method": "POST", "path": "/kyc",
+      "body": "{ 'customerId': steps.api1.body.id, 'branch': $substring(steps.api1.body.accountNo, 4, 3) }",
+      "successWhen": "body.result != 'ERROR'" },
+    { "id": "api3", "endpoint": "score-svc", "method": "GET", "path": "/scores/{steps.api1.body.id}" },
+    { "id": "api4", "endpoint": "account-svc", "method": "POST", "path": "/accounts",
+      "body": "{ 'customerId': steps.api1.body.id, 'kycRef': steps.api2.body.ref }" },
+    { "id": "api5", "endpoint": "notify-svc", "method": "POST", "path": "/notifications",
+      "mode": "ASYNC_CALLBACK", "dependsOn": ["api2"],
+      "body": "{ 'customerId': steps.api1.body.id, 'replyTo': callback.url }",
+      "callback": { "timeoutMs": 3600000, "successWhen": "body.status = 'DONE'" },
+      "blocksRunCompletion": false, "onFailure": "CONTINUE" }
+  ],
+  "output": "{ 'customerId': steps.api1.body.id, 'kyc': steps.api2.body.status }"
+}

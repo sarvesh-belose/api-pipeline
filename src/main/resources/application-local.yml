@@ -8,3 +8,7 @@ spring:
 springdoc:
   api-docs.enabled: true
   swagger-ui.enabled: true
+apiorch:
+  endpoints:
+    allow-http: true
+    allowed-hosts: [localhost]
