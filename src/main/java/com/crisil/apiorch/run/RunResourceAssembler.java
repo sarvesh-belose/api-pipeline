@@ -31,8 +31,25 @@ public class RunResourceAssembler {
     }
 
     public RunResource assemble(UUID runId) {
-        RunRows.Run run = rows.run(runId).orElseThrow(() -> new ApiProblemException(HttpStatus.NOT_FOUND,
-                "run-not-found", "Run " + runId + " does not exist."));
+        return assemble(rows.run(runId).orElseThrow(() -> notFound(runId)));
+    }
+
+    /** The resource for a freshly accepted async run, without reading it back (US-4.2 AC1). */
+    public static RunResource accepted(UUID runId, String code, int version) {
+        return new RunResource(runId, code, version, "ACCEPTED", "ASYNC", null, null, null, null, null, null, null,
+                false, false, null, null, null, links(runId));
+    }
+
+    static ApiProblemException notFound(Object runId) {
+        return new ApiProblemException(HttpStatus.NOT_FOUND, "run-not-found", "Run " + runId + " does not exist.");
+    }
+
+    private static Map<String, String> links(UUID runId) {
+        return Map.of("self", "/api/v1/runs/" + runId, "timeline", "/api/v1/runs/" + runId + "/timeline");
+    }
+
+    RunResource assemble(RunRows.Run run) {
+        UUID runId = run.id();
         CompiledPipeline pipeline = pipelines.compiled(run.pipelineCode(), run.pipelineVersion());
         List<RunRows.Step> rowsInListOrder = new ArrayList<>(rows.steps(runId));
         rowsInListOrder.sort(Comparator.comparingInt(s -> pipeline.step(s.stepId()).index()));
@@ -54,6 +71,6 @@ public class RunResourceAssembler {
         return new RunResource(run.id(), run.pipelineCode(), run.pipelineVersion(), run.status().name(), run.mode(),
                 run.correlationId(), run.createdAt(), run.startedAt(), run.completedAt(), run.endedAt(), durationMs,
                 output, run.status().doneForCaller(), false, List.of(), errors, steps,
-                Map.of("self", "/api/v1/runs/" + runId, "timeline", "/api/v1/runs/" + runId + "/timeline"));
+                links(runId));
     }
 }

@@ -68,11 +68,20 @@ public final class Http {
     }
 
     public HttpResponse<String> send(String method, String path, String json, String ifMatch) throws Exception {
+        return send(method, path, json, ifMatch, null, null);
+    }
+
+    /** As {@link #send(String, String, String, String)}, with one extra request header when {@code header} is set. */
+    public HttpResponse<String> send(String method, String path, String json, String ifMatch, String header,
+            String value) throws Exception {
         HttpRequest.Builder b = request(path)
                 .header("Content-Type", "application/json")
                 .method(method, json == null ? BodyPublishers.noBody() : BodyPublishers.ofString(json));
         if (ifMatch != null) {
             b.header("If-Match", ifMatch);
+        }
+        if (header != null) {
+            b.header(header, value);
         }
         return client.send(b.build(), BodyHandlers.ofString());
     }

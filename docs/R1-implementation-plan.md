@@ -219,11 +219,11 @@ US-1.2 (Sprint 2).
 (`RunDecision`, `RunContext`). Until US-4.3 the production step executor fails every step with
 `STEP_EXECUTOR_UNAVAILABLE`.
 
-**Sprint 3 status (2026-11-05): in progress** on `sprint3/*` branches; both tiers green (`verify -Pslow`, 314 tests).
+**Sprint 3 status (2026-11-05): in progress** on `sprint3/*` branches; both tiers green (`verify -Pslow`, 327 tests).
 
 | Planned | Delivered | Still to do this sprint |
 |---|---|---|
-| Finish US-3.3 → US-3.4 → US-4.2 | US-3.3 complete: `POST …/{code}/publish` under the `pipeline` row lock, canonical SHA-256 checksum (keys sorted, step order kept), `no-changes`, `version-conflict` for a lost race (H2 and SQL Server), optional four-eyes, `GET …/versions`, `…/versions/{v\|latest}`; latest-version cache (5 s TTL, evicted on publish after commit) | US-3.4 rollback, US-4.2 async mode |
+| Finish US-3.3 → US-3.4 → US-4.2 | US-3.3 complete: `POST …/{code}/publish` under the `pipeline` row lock, canonical SHA-256 checksum (keys sorted, step order kept), `no-changes`, `version-conflict` for a lost race (H2 and SQL Server), optional four-eyes, `GET …/versions`, `…/versions/{v\|latest}`; latest-version cache (5 s TTL, evicted on publish after commit). US-3.4 complete: semantic diff (`…/versions/{v}/diff?against=`, order, plan, added/removed steps, dotted field changes, effective `dependsOn`, settings) and `POST …/rollback?to=k` (re-validated, republished as N+1 with `sourceVersion`/`sourceChecksum`, draft untouched). US-4.2 complete: immediate `202` with an `ACCEPTED` resource, `Prefer: respond-async` with `Preference-Applied`, `Retry-After: 2` while not done, creator-only reads (`404 run-not-found` for others, ops see all), malformed IDs `404`, cross-node poll from the database | — |
 | US-4.3 paired with US-7.2 → US-7.3 | — | All three |
 | US-7.6 core, US-7.5 core | — | `ContextCipher`, `ApiorchMetrics` facade |
 
