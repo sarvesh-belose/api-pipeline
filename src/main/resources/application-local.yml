@@ -14,3 +14,5 @@ apiorch:
     allowed-hosts: [localhost]
   security:
     mode: dev
+  run:
+    allow-version-override: true

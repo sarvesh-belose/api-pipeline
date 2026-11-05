@@ -28,7 +28,10 @@ public record ApiorchProperties(
         @Valid @DefaultValue Resilience resilience,
         @Valid @DefaultValue Secrets secrets,
         @Valid @DefaultValue Security security,
-        @Valid @DefaultValue Expression expression) {
+        @Valid @DefaultValue Expression expression,
+        @Valid @DefaultValue Lease lease,
+        @Valid @DefaultValue Engine engine,
+        @Valid @DefaultValue Executor executor) {
 
     /** US-1.3. */
     public record Correlation(@DefaultValue("X-Correlation-Id") @NotBlank @Pattern(regexp = "[A-Za-z0-9-]+") String header) {
@@ -47,6 +50,23 @@ public record ApiorchProperties(
             @DefaultValue("30000") @Min(0) long maxSyncWaitMs,
             @DefaultValue("60000") @Min(1000) long defaultRunTimeoutMs,
             @DefaultValue("false") boolean allowVersionOverride) {
+    }
+
+    /** US-5.5. Lease arithmetic uses database time. */
+    public record Lease(
+            @DefaultValue("30000") @Min(1000) long durationMs,
+            @DefaultValue("10000") @Min(100) long renewIntervalMs) {
+    }
+
+    /** README §5.1 rule 1: the bounded row-lock wait (ADR-003 F5). */
+    public record Engine(@DefaultValue("2000") @Min(100) long lockTimeoutMs) {
+    }
+
+    /** US-4.3: the fixed-size {@code step-io} pool that runs blocking step calls. */
+    public record Executor(@Valid @DefaultValue StepIo stepIo) {
+
+        public record StepIo(@DefaultValue("64") @Min(1) int size, @DefaultValue("1000") @Min(0) int queueCapacity) {
+        }
     }
 
     /** US-3.2, US-4.3 (ADR-002 D2, D4). The wall-clock budget is validated at 500–5000 ms. */

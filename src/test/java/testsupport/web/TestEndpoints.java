@@ -35,11 +35,6 @@ public class TestEndpoints {
         return Map.of("bytes", body.toString().length());
     }
 
-    @PostMapping("/api/v1/pipelines/{code}/runs")
-    public Map<String, Object> runs(@PathVariable String code, @RequestBody JsonNode body) {
-        return Map.of("code", code, "bytes", body.toString().length());
-    }
-
     @PostMapping("/api/v1/callbacks/{runId}/{stepId}")
     public Map<String, Object> callbacks(@PathVariable String runId, @PathVariable String stepId,
             @RequestBody JsonNode body) {

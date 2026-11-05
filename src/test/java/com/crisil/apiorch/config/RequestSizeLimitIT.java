@@ -44,8 +44,9 @@ class RequestSizeLimitIT {
     @ParameterizedTest
     @ValueSource(strings = {"/api/v1/admin/test/free", "/api/v1/pipelines/demo/runs", "/api/v1/callbacks/r1/s1"})
     void bodyAtTheLimitIsAccepted(String path) throws Exception {
-        assertThat(http.postJson(path, Http.jsonOfSize(limitFor(path) - 50)).statusCode()).isEqualTo(200);
-        assertThat(http.postChunked(path, Http.jsonOfSize(limitFor(path) - 50)).statusCode()).isEqualTo(200);
+        // the runs path reaches the real RunController, which answers 404 for an unknown pipeline: not 413 is the point
+        assertThat(http.postJson(path, Http.jsonOfSize(limitFor(path) - 50)).statusCode()).isIn(200, 404);
+        assertThat(http.postChunked(path, Http.jsonOfSize(limitFor(path) - 50)).statusCode()).isIn(200, 404);
     }
 
     @ParameterizedTest
