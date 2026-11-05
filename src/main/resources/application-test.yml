@@ -13,3 +13,8 @@ apiorch:
     allowed-hosts: [localhost, "*.example.com"]
   run:
     allow-version-override: true
+  context:
+    # a fixed, test-only key under src/test/resources (US-7.6); never a production key
+    encryption-keys:
+      t1: file:${user.dir}/src/test/resources/test-secrets/context-t1.key
+    active-kid: t1

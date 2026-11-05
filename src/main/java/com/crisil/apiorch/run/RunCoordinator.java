@@ -46,6 +46,7 @@ import com.crisil.apiorch.observability.MaskingPolicy;
 import com.crisil.apiorch.http.EndpointClientRegistry;
 import com.crisil.apiorch.observability.EventType;
 import com.crisil.apiorch.observability.MdcSupport;
+import com.crisil.apiorch.persistence.ContextCipher;
 import com.crisil.apiorch.persistence.RunRows;
 import com.crisil.apiorch.step.StepAttempt;
 import com.crisil.apiorch.step.StepExecutor;
@@ -121,6 +122,10 @@ public class RunCoordinator {
         List<StepInvocation> scheduled;
         try {
             scheduled = tx.execute(s -> schedule(lease));
+        } catch (ContextCipher.DecryptionException e) {
+            log.error("run context failed to decrypt runId={}; failing the run", lease.runId(), e);
+            failUnreadable(lease, e);
+            return;
         } catch (LeaseLostException e) {
             log.warn("lease lost runId={} epoch={}", lease.runId(), lease.epoch());
             metrics.leaseLost();
@@ -348,6 +353,34 @@ public class RunCoordinator {
                 notifier.notifyDone(runId);
             }
         });
+    }
+
+    /** US-7.6 AC4: corrupt or moved context is never used; the run fails with {@code CONTEXT_DECRYPTION_FAILED}. */
+    private void failUnreadable(Lease lease, ContextCipher.DecryptionException e) {
+        try {
+            tx.executeWithoutResult(s -> {
+                leases.lockFenced(lease);
+                RunRows.Run run = rows.run(lease.runId()).orElseThrow();
+                if (run.status().terminal()) {
+                    return;
+                }
+                rows.stop(run.id(), "FAIL_RUN", ContextCipher.DecryptionException.CODE, e.getMessage(), null);
+                rows.steps(run.id()).stream().filter(st -> st.status() == StepStatus.PENDING)
+                        .forEach(st -> rows.cancelStep(run.id(), st.stepId()));
+                recorder.record(run.id(), EventType.RUN_FAILED, null,
+                        Map.of("code", ContextCipher.DecryptionException.CODE), null);
+                rows.finishRun(run.id(), RunStatus.FAILED);
+                java.util.UUID runId = run.id();
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        notifier.notifyDone(runId);
+                    }
+                });
+            });
+        } catch (LeaseLostException lost) {
+            metrics.leaseLost();
+        }
     }
 
     private ObjectNode context(RunRows.Run run) {

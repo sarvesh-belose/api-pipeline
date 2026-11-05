@@ -28,7 +28,7 @@ import com.crisil.apiorch.engine.StepStatus;
 /**
  * Row access for {@code pipeline_run}, {@code step_execution} and {@code run_context} (US-4.1), all through
  * {@code JdbcClient} (README §5.1 rule 2). Callers hold the run lock where the rules require it. Timestamps come
- * from {@code SYSUTCDATETIME()}. Context content is stored as UTF-8 JSON until US-7.6 encrypts it.
+ * from {@code SYSUTCDATETIME()}. Context content is encrypted with {@link ContextCipher} (US-7.6), bound to its run and entry key.
  */
 @Component
 public class RunRows {
@@ -49,9 +49,12 @@ public class RunRows {
     private final JdbcClient jdbc;
     private final ObjectMapper json;
 
-    public RunRows(JdbcClient jdbc, ObjectMapper json) {
+    private final ContextCipher cipher;
+
+    public RunRows(JdbcClient jdbc, ObjectMapper json, ContextCipher cipher) {
         this.jdbc = jdbc;
         this.json = json;
+        this.cipher = cipher;
     }
 
     /** README §5.1 rule 6: the run is created owned by this node, at epoch 1. */
@@ -75,21 +78,36 @@ public class RunRows {
     }
 
     public void putContext(UUID runId, String key, JsonNode value) {
-        byte[] content = write(value);
-        int updated = jdbc.sql("UPDATE run_context SET content = :c, updated_at = SYSUTCDATETIME() "
+        String stored = cipher.encrypt(runId, key, write(value));
+        byte[] content = stored.getBytes(StandardCharsets.UTF_8);
+        String kid = ContextCipher.kidOf(stored);
+        int updated = jdbc.sql("UPDATE run_context SET content = :c, key_id = :kid, updated_at = SYSUTCDATETIME() "
                 + "WHERE run_id = :run AND entry_key = :key")
-                .param("c", content).param("run", runId).param("key", key).update();
+                .param("c", content).param("kid", kid).param("run", runId).param("key", key).update();
         if (updated == 0) {
-            jdbc.sql("INSERT INTO run_context (run_id, entry_key, content) VALUES (:run, :key, :c)")
-                    .param("run", runId).param("key", key).param("c", content).update();
+            jdbc.sql("INSERT INTO run_context (run_id, entry_key, content, key_id) VALUES (:run, :key, :c, :kid)")
+                    .param("run", runId).param("key", key).param("c", content).param("kid", kid).update();
         }
     }
 
+    /** @throws ContextCipher.DecryptionException when an entry was tampered with or moved (US-7.6 AC4) */
     public Map<String, JsonNode> context(UUID runId) {
         Map<String, JsonNode> out = new LinkedHashMap<>();
         jdbc.sql("SELECT entry_key, content FROM run_context WHERE run_id = :run").param("run", runId)
                 .query((ResultSet rs) -> {
-                    out.put(rs.getString("entry_key"), read(rs.getBytes("content")));
+                    String key = rs.getString("entry_key");
+                    String stored = new String(rs.getBytes("content"), StandardCharsets.UTF_8);
+                    out.put(key, read(cipher.decrypt(runId, key, stored)));
+                });
+        return out;
+    }
+
+    /** Rows per key id, for the rotation report at startup (US-7.6 AC3); {@code null} is plain. */
+    public Map<String, Long> contextRowsByKid() {
+        Map<String, Long> out = new LinkedHashMap<>();
+        jdbc.sql("SELECT key_id, COUNT(*) AS n FROM run_context GROUP BY key_id")
+                .query((ResultSet rs) -> {
+                    out.put(rs.getString("key_id"), rs.getLong("n"));
                 });
         return out;
     }
@@ -179,17 +197,17 @@ public class RunRows {
         return message == null || message.length() <= 2000 ? message : message.substring(0, 2000);
     }
 
-    private byte[] write(JsonNode value) {
+    private String write(JsonNode value) {
         try {
-            return json.writeValueAsBytes(value);
+            return json.writeValueAsString(value);
         } catch (JsonProcessingException e) {
             throw new IllegalArgumentException("Context value is not serialisable", e);
         }
     }
 
-    private JsonNode read(byte[] content) {
+    private JsonNode read(String content) {
         try {
-            return json.readTree(new String(content, StandardCharsets.UTF_8));
+            return json.readTree(content);
         } catch (IOException e) {
             throw new IllegalStateException("Stored context is not readable", e);
         }

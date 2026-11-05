@@ -65,7 +65,15 @@ public class RunResourceAssembler {
         if (run.errorCode() != null && errors.stream().noneMatch(e -> run.errorCode().equals(e.code()))) {
             errors.add(new RunResource.Error(run.errorStepId(), run.errorCode(), run.errorMessage(), null));
         }
-        JsonNode output = run.status().doneForCaller() ? rows.context(runId).get("output") : null;
+        JsonNode output = null;
+        if (run.status().doneForCaller()) {
+            try {
+                output = rows.context(runId).get("output");
+            } catch (com.crisil.apiorch.persistence.ContextCipher.DecryptionException e) {
+                // logged where the run failed; the resource is still served, without output (US-7.6 AC4)
+                output = null;
+            }
+        }
         Long durationMs = run.startedAt() != null && run.endedAt() != null
                 ? Duration.between(run.startedAt(), run.endedAt()).toMillis() : null;
         return new RunResource(run.id(), run.pipelineCode(), run.pipelineVersion(), run.status().name(), run.mode(),

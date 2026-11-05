@@ -236,6 +236,19 @@ afterwards. `HttpStepExecutor` replaces the placeholder executor.
 reordered version is asserted in `SequentialRunIT`. Cross-node convergence is shown by a version written straight to the table (no local event)
 being picked up within the TTL; the two-context version waits for `ClusterTestSupport` engine hooks (US-5.5).
 
+**Sprint 4 status (2026-11-05): in progress** on `sprint4/*` branches; both tiers green (`verify -Pslow`, 369 tests).
+
+| Planned | Delivered | Still to do this sprint |
+|---|---|---|
+| Finish US-7.6 → US-7.7 | US-7.6 for `run_context`: every entry stored `v1:<kid>:…` with `key_id`, keys by `env:`/`file:` reference (`apiorch.context.*`), startup fails without keys outside `local` (`plain:` with a WARN there), rotation report at startup, tampered or moved entries fail the run with `CONTEXT_DECRYPTION_FAILED` | Outbox payload encryption with US-6.5 (R2); US-7.7 |
+| US-4.7 → US-4.6 | — | Both |
+| Finish US-4.3 → US-4.4 → start US-5.5 | — | All three |
+| US-5.1 → start US-5.2 | — | Both |
+
+**Note (US-7.6):** context keys are operator-configured, so they are resolved directly from `env:` or `file:` and the
+endpoint reference policy (US-2.2) does not apply to them. The test profile uses a fixed test-only key under
+`src/test/resources/test-secrets`; production reads `APIORCH_SECRET_CTX_K1`.
+
 ## 7. Cross-cutting enablers (in Sprint 1, so the four tracks don't block each other)
 
 1. **Schema-ahead.** Write `V2__endpoint` through `V7__run_exchange` in Sprint 1, straight from
