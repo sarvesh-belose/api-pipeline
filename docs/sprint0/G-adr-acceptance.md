@@ -24,9 +24,9 @@ Business Owner signs off on one DSL restriction.
 
 | ADR | Outcome | By | Date | Conditions |
 |---|---|---|---|---|
-| ADR-003 | **Accepted**, with decisions 1 and 4 | Tech lead (Recorded by Sarvesh Belose, 2026-11-05) | 2026-11-05 | Decision 1 as recommended: (a) commercial support if production comes before a Boot 4 move, otherwise (b) patch bumps within 3.5.x. Confirm the branch once the production date is set. Decision 4: SQL Server-only proofs run in the `slow` tier (amended 2026-11-05: locally before merge and before each sprint review; there is no CI) |
-| ADR-002 | **Accepted**, with decision 3 | Tech lead (Recorded by Sarvesh Belose, 2026-11-05) | 2026-11-05 | Decision 3: double arithmetic accepted; the DSL reference (US-3.1) states the 2^53 limit |
-| ADR-002 D6 (regex ban) | **Signed off** | Business Owner (Recorded by Sarvesh Belose, 2026-11-05) | 2026-11-05 | No regex literals in R1; revisit after R1 |
+| ADR-003 | **Accepted**, with decisions 1 and 4 | Sarvesh Belose (tech lead) | 2026-11-05 | Decision 1 as recommended: (a) commercial support if production comes before a Boot 4 move, otherwise (b) patch bumps within 3.5.x. Confirm the branch once the production date is set. Decision 4: SQL Server-only proofs run in the `slow` tier (amended 2026-11-05: locally before merge and before each sprint review; there is no CI) |
+| ADR-002 | **Accepted**, with decision 3 | Sarvesh Belose (tech lead) | 2026-11-05 | Decision 3: double arithmetic accepted; the DSL reference (US-3.1) states the 2^53 limit |
+| ADR-002 D6 (regex ban) | **Signed off** | Sarvesh Belose (Business Owner) | 2026-11-05 | No regex literals in R1; revisit after R1 |
 
-Each ADR's **Status** row is updated to the outcome (2026-11-05). Approver names were not given in the
-review record; add them here if your process needs named approvers.
+Each ADR's **Status** row is updated to the outcome (2026-11-05). Sarvesh Belose holds both the
+tech lead and Business Owner roles (S6 team table).

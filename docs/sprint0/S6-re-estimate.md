@@ -1,7 +1,7 @@
 # S6: Re-estimate, team and review checkpoints (Sprint 0 review pack)
 
 **Status:** **held 2026-11-05.** Proposed estimates agreed, 4 developers, sprint calendar and review
-dates accepted (outcome in §5). Names in §3 are still to be filled in.
+dates accepted (outcome in §5). All roles in §3 are assigned to Sarvesh Belose.
 
 > **Dates are illustrative.** Every calendar date in this plan (sprint calendar, gantt, review
 > checkpoints) is for documentation only and does not drive execution. Work starts when it is
@@ -69,14 +69,14 @@ the Business Owner (risk R8).
 
 | Role | Workstream (plan §5) | Name | Confirmed |
 |---|---|---|---|
-| Dev A | Platform, edge and data protection | | ☐ |
-| Dev B | Definitions and run API | | ☐ |
-| Dev C | Engine (critical path) | | ☐ |
-| Dev D | Endpoints, HTTP and resilience | | ☐ |
-| QA/SDET (shared) | Harnesses, R1 end-to-end suite, exit verification | | ☐ |
-| DevOps (part-time) | Developer machine setup (JDK 17, Docker), environments and their load balancers | | ☐ |
-| Tech lead | ADR acceptance, review checkpoints | | ☐ |
-| Business Owner | Regex ban (ADR-002 D6), reorder demo sign-off | | ☐ |
+| Dev A | Platform, edge and data protection | Sarvesh Belose | ☑ |
+| Dev B | Definitions and run API | Sarvesh Belose | ☑ |
+| Dev C | Engine (critical path) | Sarvesh Belose | ☑ |
+| Dev D | Endpoints, HTTP and resilience | Sarvesh Belose | ☑ |
+| QA/SDET (shared) | Harnesses, R1 end-to-end suite, exit verification | Sarvesh Belose | ☑ |
+| DevOps (part-time) | Developer machine setup (JDK 17, Docker), environments and their load balancers | Sarvesh Belose | ☑ |
+| Tech lead | ADR acceptance, review checkpoints | Sarvesh Belose | ☑ |
+| Business Owner | Regex ban (ADR-002 D6), reorder demo sign-off | Sarvesh Belose | ☑ |
 
 ## 4. Architecture review checkpoints (plan §8), proposed dates
 
@@ -98,7 +98,8 @@ Recorded 2026-11-05 by Sarvesh Belose.
   US-7.4 = M+, US-3.1 stays L). Demand ≈ 150 against capacity 168, so **no plan change needed**;
   slack ≈ 18 dev-days (risk R8 trigger unchanged).
 - **Team size confirmed: 4 developers**, plus the shared QA/SDET and part-time DevOps (plan §5).
-  **Gap:** names for each role in §3 are not yet assigned.
+  **Names:** every role in §3 is assigned to Sarvesh Belose (2026-11-05). The four workstreams
+  stay separate in the plan for documentation; they are worked by one person.
 - **Illustrative sprint calendar** (documentation only): S1 16–27 Nov, S2 30 Nov–11 Dec,
   S3 14–25 Dec, S4 28 Dec–8 Jan, S5 11–22 Jan, S6 25 Jan–5 Feb 2027.
 - **Review checkpoints accepted** by sprint position as in §4 (end of S1, mid S3, start of S5, end
