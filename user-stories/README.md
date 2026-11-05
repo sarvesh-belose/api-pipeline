@@ -34,7 +34,7 @@ These are different features. Don't use "async" on its own.
 | E5 Resilience | [E5-resilience](E5-resilience/) | Timeouts, retries, circuit breakers, bulkheads, recovery, compensation, operator repair |
 | E6 Async steps | [E6-async-apis](E6-async-apis/) | Callback-based async steps, completion while pending, caller webhooks |
 | E7 Activity logging & data protection | [E7-activity-logging](E7-activity-logging/) | Full activity log, masking, timeline, metrics, encryption, retention, erasure, tracing |
-| E8 Enablement | [E8-enablement](E8-enablement/) | Demo, authoring kit, performance and failover proof, ops runbook |
+| E8 Enablement | [E8-enablement](E8-enablement/) | Demo, authoring kit, performance and failover proof, ops runbook, production database handover |
 
 ## 2. Story map
 
@@ -90,6 +90,7 @@ These are different features. Don't use "async" on its own.
 | [US-8.2](E8-enablement/US-8.2-load-soak-failover-tests.md) | Load, soak and failover tests against the NFRs | Must | L | US-6.3, US-5.4 | R2 |
 | [US-8.3](E8-enablement/US-8.3-pipeline-authoring-kit.md) | Pipeline authoring kit | Must | M | US-3.2 | R2 |
 | [US-8.4](E8-enablement/US-8.4-ops-runbook-alerts.md) | Operations runbook and alert pack | Must | M | US-7.5, US-5.8 | R2 |
+| [US-8.5](E8-enablement/US-8.5-production-database-handover.md) | Hand over the production database to the DBA team | Must | M | US-7.1, US-7.8 | R2 |
 
 **Sizes:** S ≈ 1–3 dev-days, M ≈ 3–6 dev-days, L ≈ 6–10 dev-days (including tests).
 
@@ -98,7 +99,7 @@ These are different features. Don't use "async" on its own.
 | Release | Purpose | Scope | Exit criteria |
 |---|---|---|---|
 | **R1: internal milestone** | Prove the core engine; not offered to the customer | E1 (incl. US-1.4), US-2.1–2.2, US-3.1–3.4, US-4.1–4.4, US-4.6–4.7, US-5.1–5.5, US-5.7, US-7.1–7.7, US-8.1 slice A | Sync and caller-async runs, sequence and DAG with mapping, retries, timeouts, circuit breakers **and backpressure**, crash recovery, cancel and resolve, full activity log incl. caller exchange, metrics, encrypted working data, no-redeploy reorder and rollback, reachable on a stable public address, and a **runnable reorder demo** |
-| **R2: first customer release** | Everything the customer asked for, production-ready | US-2.3, US-3.6–3.7, US-4.8, US-5.8, E6 (except US-6.6), US-7.8, US-7.10, US-8.1 slice B, US-8.2–8.4 | Async steps with complete-while-pending, callback timeouts, caller webhooks, resume, retention, erasure, promotion between environments, NFRs proven (US-8.2), runbook |
+| **R2: first customer release** | Everything the customer asked for, production-ready | US-2.3, US-3.6–3.7, US-4.8, US-5.8, E6 (except US-6.6), US-7.8, US-7.10, US-8.1 slice B, US-8.2–8.5 | Async steps with complete-while-pending, callback timeouts, caller webhooks, resume, retention, erasure, promotion between environments, NFRs proven (US-8.2), runbook, production database handed to the DBA team (US-8.5) |
 | **R3: enrichment** | Optional power features | US-3.5, US-4.5, US-5.6, US-6.6, US-7.9 | Dry run, conditions, compensation, fixed callback endpoints, tracing |
 
 **R2 entry criterion:** an **inventory of the real async APIs** must exist before US-6.x starts.
@@ -135,6 +136,7 @@ publish with `FEATURE_NOT_AVAILABLE` until that story lands (US-3.2). The affect
 | Decision: compensation is optional **per step** (a step may declare `compensate`) | US-5.6 |
 | Decision: inbound auth via JWT from existing SSO, no user tables | US-1.2, US-4.8 |
 | Edge: one stable public address per environment (own load balancer); no shared gateway or service registry | US-1.4 |
+| No DBA team until production: database provisioning handed over as a story | US-8.5 |
 | Platform: approvals beyond a one-line four-eyes check belong to the workflow service | US-3.3 |
 | Non-functional targets (§14) | US-8.2, US-7.5, US-8.4 |
 | Personal data protection | US-7.3, US-7.6, US-7.8, US-7.10 |
@@ -264,6 +266,8 @@ Calling System ─POST /api/v1/pipelines/{code}/runs─► RunController (MVC as
 - **Business Owner:** decides and approves order changes, and may be the second pair of eyes
   under four-eyes publishing (US-3.3).
 - **Operations Engineer**, **Security Officer** and **Developer**.
+- **Database Administrator:** joins at the move to production (R2). Until then there is no DBA
+  team; developers run SQL Server only through Testcontainers, and US-8.5 is the handover pack.
 
 ## 7. State models (canonical)
 

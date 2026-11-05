@@ -22,21 +22,14 @@ Both builds must pass before the merge. A second developer reviews the branch fi
 
 - [x] `verify` green (9/9) · [x] `verify -Pslow` green (12/12) · [x] merged into `main` (commit: `cc7a7e3`, 2026-11-05)
 
-## 2. Raise the DBA ticket (S3)
-
-Copy [S3-dba-request.md](S3-dba-request.md) into the DBA team's queue. Ask for secret-store
-references for the three logins; passwords never go in the ticket.
-
-- [ ] Ticket ID: ____
-
-## 3. Hold the re-estimate session (S6)
+## 2. Hold the re-estimate session (S6)
 
 Use [S6-re-estimate.md](S6-re-estimate.md): agree the story sizes, confirm the team, accept the
 architecture review dates.
 
 - [ ] Estimates agreed · [ ] Team confirmed · [ ] Review dates accepted
 
-## 4. Set up every developer machine
+## 3. Set up every developer machine
 
 Each developer needs:
 - JDK 17;
@@ -53,3 +46,5 @@ Each developer proves the setup with `./mvnw verify -Pslow` on `main` once.
 - ADR-002 and ADR-003 accepted, and the D6 regex ban signed off (2026-11-05,
   [acceptance record](G-adr-acceptance.md)).
 - S4, the platform gateway PR, was dropped (2026-11-05): apiorch uses no shared gateway.
+- S3, the DBA ticket, became story [US-8.5](../../user-stories/E8-enablement/US-8.5-production-database-handover.md)
+  (2026-11-05): there is no DBA team until production, so the request is handed over at R2.

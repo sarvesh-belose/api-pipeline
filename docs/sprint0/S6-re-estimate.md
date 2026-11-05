@@ -70,7 +70,6 @@ over 28 Dec–8 Jan. Agree leave plans now; a week of one developer's leave cost
 | Dev D | Endpoints, HTTP and resilience | | ☐ |
 | QA/SDET (shared) | Harnesses, R1 end-to-end suite, exit verification | | ☐ |
 | DevOps (part-time) | Developer machine setup (JDK 17, Docker), environments and their load balancers | | ☐ |
-| DBA (part-time) | S3 database, logins, role mapping | | ☐ |
 | Tech lead | ADR acceptance, review checkpoints | | ☐ |
 | Business Owner | Regex ban (ADR-002 D6), reorder demo sign-off | | ☐ |
 
@@ -80,7 +79,7 @@ Dates assume Sprint 0 on 9–13 Nov 2026 and 2-week sprints after it. Shift them
 
 | Review | Proposed date | Entry condition | Attendees |
 |---|---|---|---|
-| Contracts and schema | Thu 26 Nov 2026 (end of S1) | Contracts merged into `main`; V2–V7 migrations green on both tiers | Tech lead, Dev C, Dev D, DBA |
+| Contracts and schema | Thu 26 Nov 2026 (end of S1) | Contracts merged into `main`; V2–V7 migrations green on both tiers | Tech lead, Dev C, Dev D |
 | HTTP path | Fri 18 Dec 2026 (mid S3) | US-4.3 / US-7.2 draft branch | Tech lead, Dev C, Dev D |
 | Concurrency | Mon 11 Jan 2027 (start of S5) | US-5.5 design note with sequence diagrams | Tech lead, Dev B, Dev C, QA |
 | R1 security review | Thu 4 Feb 2027 (end of S6) | US-1.2, US-2.2, US-7.3, US-7.6 merged | Tech lead, Dev A, security reviewer |
