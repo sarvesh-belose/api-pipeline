@@ -9,23 +9,50 @@ import java.net.http.HttpResponse;
 import java.net.http.HttpResponse.BodyHandlers;
 import java.nio.charset.StandardCharsets;
 
-/** A tiny JDK HTTP client for integration tests against the real port. */
+import testsupport.security.TestJwt;
+
+/**
+ * A tiny JDK HTTP client for integration tests against the real port. By default it sends a test JWT with all
+ * three roles (US-1.2); {@link #as(String)} switches identity and {@link #anonymous(int)} sends none.
+ */
 public final class Http {
 
     private final HttpClient client = HttpClient.newHttpClient();
     private final String base;
+    private final String token;
 
     public Http(int port) {
+        this(port, TestJwt.allRoles());
+    }
+
+    private Http(int port, String token) {
         this.base = "http://localhost:" + port;
+        this.token = token;
+    }
+
+    public static Http anonymous(int port) {
+        return new Http(port, null);
+    }
+
+    /** The same server with another bearer token. */
+    public Http as(String bearerToken) {
+        return new Http(Integer.parseInt(base.substring(base.lastIndexOf(':') + 1)), bearerToken);
+    }
+
+    private HttpRequest.Builder request(String path) {
+        HttpRequest.Builder b = HttpRequest.newBuilder(URI.create(base + path));
+        if (token != null) {
+            b.header("Authorization", "Bearer " + token);
+        }
+        return b;
     }
 
     public HttpResponse<String> get(String path) throws Exception {
-        return client.send(HttpRequest.newBuilder(URI.create(base + path)).GET().build(), BodyHandlers.ofString());
+        return client.send(request(path).GET().build(), BodyHandlers.ofString());
     }
 
     public HttpResponse<String> get(String path, String header, String value) throws Exception {
-        return client.send(HttpRequest.newBuilder(URI.create(base + path)).header(header, value).GET().build(),
-                BodyHandlers.ofString());
+        return client.send(request(path).header(header, value).GET().build(), BodyHandlers.ofString());
     }
 
     public HttpResponse<String> postJson(String path, String json) throws Exception {
@@ -37,11 +64,11 @@ public final class Http {
     }
 
     public HttpResponse<String> delete(String path) throws Exception {
-        return client.send(HttpRequest.newBuilder(URI.create(base + path)).DELETE().build(), BodyHandlers.ofString());
+        return client.send(request(path).DELETE().build(), BodyHandlers.ofString());
     }
 
     public HttpResponse<String> send(String method, String path, String json, String ifMatch) throws Exception {
-        HttpRequest.Builder b = HttpRequest.newBuilder(URI.create(base + path))
+        HttpRequest.Builder b = request(path)
                 .header("Content-Type", "application/json")
                 .method(method, json == null ? BodyPublishers.noBody() : BodyPublishers.ofString(json));
         if (ifMatch != null) {
@@ -53,7 +80,7 @@ public final class Http {
     /** POST without a Content-Length, so the body is sent chunked. */
     public HttpResponse<String> postChunked(String path, String json) throws Exception {
         byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
-        return client.send(HttpRequest.newBuilder(URI.create(base + path))
+        return client.send(request(path)
                 .header("Content-Type", "application/json")
                 .POST(BodyPublishers.ofInputStream(() -> new ByteArrayInputStream(bytes))).build(),
                 BodyHandlers.ofString());

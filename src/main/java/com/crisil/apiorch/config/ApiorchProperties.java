@@ -26,7 +26,8 @@ public record ApiorchProperties(
         @Valid @DefaultValue Callback callback,
         @Valid @DefaultValue Endpoints endpoints,
         @Valid @DefaultValue Resilience resilience,
-        @Valid @DefaultValue Secrets secrets) {
+        @Valid @DefaultValue Secrets secrets,
+        @Valid @DefaultValue Security security) {
 
     /** US-1.3. */
     public record Correlation(@DefaultValue("X-Correlation-Id") @NotBlank @Pattern(regexp = "[A-Za-z0-9-]+") String header) {
@@ -54,6 +55,16 @@ public record ApiorchProperties(
             @DefaultValue("false") boolean allowHttp,
             @DefaultValue List<@NotBlank String> allowedHosts,
             @DefaultValue("10000") @Min(100) long refreshIntervalMs) {
+    }
+
+    /** US-1.2. {@code dev} is refused unless the {@code local} profile is active. */
+    public record Security(
+            @DefaultValue("jwt") @NotNull Mode mode,
+            @DefaultValue("roles") @NotBlank String rolesClaim,
+            @DefaultValue("sub") @NotBlank String principalClaim,
+            @DefaultValue({"10.0.0.0/8", "127.0.0.1/32", "::1/128"}) List<@NotBlank String> metricsAllowedCidrs) {
+
+        public enum Mode { JWT, DEV }
     }
 
     /** US-2.2: where secret references may point, and how long resolved values are cached. */

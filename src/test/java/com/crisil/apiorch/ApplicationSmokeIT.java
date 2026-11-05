@@ -38,7 +38,7 @@ class ApplicationSmokeIT {
 
     @Test
     void unknownRouteIsProblemJson() throws Exception {
-        HttpResponse<String> res = get("http://localhost:" + port + "/api/v1/does-not-exist");
+        HttpResponse<String> res = new testsupport.web.Http(port).get("/api/v1/does-not-exist");
         assertThat(res.statusCode()).isEqualTo(404);
         assertThat(res.headers().firstValue("Content-Type")).hasValueSatisfying(
                 ct -> assertThat(ct).startsWith("application/problem+json"));

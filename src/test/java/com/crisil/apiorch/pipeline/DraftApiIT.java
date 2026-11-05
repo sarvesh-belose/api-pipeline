@@ -77,7 +77,7 @@ class DraftApiIT {
         JsonNode b = body(res);
         assertThat(b.path("version").asInt()).isZero();
         assertThat(b.path("status").asText()).isEqualTo("DRAFT");
-        assertThat(b.path("updatedBy").asText()).isEqualTo("anonymous");
+        assertThat(b.path("updatedBy").asText()).isEqualTo("test-admin");
         assertThat(b.at("/validation/valid").asBoolean()).isTrue();
         assertThat(b.at("/validation/warnings")).isEmpty();
 

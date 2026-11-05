@@ -49,7 +49,7 @@ class EndpointApiIT {
         assertThat(res.headers().firstValue("Location")).hasValue("/api/v1/admin/endpoints/" + name);
         assertThat(res.headers().firstValue("ETag")).hasValue("\"0\"");
         JsonNode body = body(res);
-        assertThat(body.path("createdBy").asText()).isEqualTo("anonymous");
+        assertThat(body.path("createdBy").asText()).isEqualTo("test-admin");
         assertThat(body.path("version").asLong()).isZero();
         assertThat(body.at("/resilience/circuitBreaker/slidingWindowSize").asInt()).isEqualTo(40);
         assertThat(body.at("/resilience/circuitBreaker/failureRateThreshold").asInt()).isEqualTo(50);
