@@ -6,4 +6,4 @@ spring:
     password: ""
     hikari.maximum-pool-size: 10
 management:
-  server.port: 0   # random, so parallel CI jobs don't collide
+  server.port: 0   # random, so parallel local test runs do not collide

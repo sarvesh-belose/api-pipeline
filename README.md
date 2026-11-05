@@ -9,13 +9,16 @@ calls (sequential, DAG, parallel, async with callback), with full activity loggi
 | [`docs/R1-implementation-plan.md`](docs/R1-implementation-plan.md) | Sprint 0 and Sprints 1–6 |
 | [`docs/adr/`](docs/adr/) | Decisions. Current stack: [ADR-003](docs/adr/ADR-003-boot35-sqlserver.md) |
 | [`tools/`](tools/README.md) | Sprint 0 gate probes (evidence, not product code) |
-| [`ops/`](ops/) | Platform change fragments (gateway route) |
 
 ## Stack
 JDK 17 · Spring Boot 3.5.14 · Spring Cloud 2025.0.3 · SQL Server 2022 in production · H2 2.3 in
 `MODE=MSSQLServer` for local runs and the fast test tier (ADR-003).
 
 ## Build and run
+
+There is no CI server: every build and test runs on a developer machine (README §13 of the
+backlog). Run the fast tier before every commit, and the slow tier before merging a story with
+`slow` tests and before each sprint review.
 
 Fast tier (unit + integration on H2, no Docker):
 ```bash

@@ -14,7 +14,7 @@ point after the Sprint 0 gates. Planning poker fills **Agreed**.
 | US-1.1 | Project scaffold & runtime baseline | M | **L (8)** | ArchUnit rules with violating fixtures, three test tiers, `MigrationIT` with partition assertions, branch-coverage gate. Sprint 0 built the skeleton, the tiers and both coverage gates, which removes about 2 days | |
 | US-1.2 | Secure APIs with SSO JWT and roles | M | 4.5 | | |
 | US-1.3 | Correlation IDs and structured JSON logs | S | 2 | logstash 8.1 masking decorator already proven (ADR-003 F12) | |
-| US-1.4 | Platform gateway and service registry | S | 2 | Gateway PR text drafted in Sprint 0 | |
+| US-1.4 | Stable public address | S | 2 | Reworked 2026-11-05: own load balancer, forwarded headers, callback-URL guard; no gateway or registry | |
 | US-2.1 | Register & manage downstream endpoints | M | 4.5 | | |
 | US-2.2 | Downstream auth via secret references | M | 4.5 | | |
 | US-3.1 | Author a pipeline draft in the JSON DSL | L | **L (8)** | G2 passed, so **not L+**: no restricted-evaluator fallback (ADR-002). The D3 built-in audit is in scope | |
@@ -69,7 +69,7 @@ over 28 Dec–8 Jan. Agree leave plans now; a week of one developer's leave cost
 | Dev C | Engine (critical path) | | ☐ |
 | Dev D | Endpoints, HTTP and resilience | | ☐ |
 | QA/SDET (shared) | Harnesses, R1 end-to-end suite, exit verification | | ☐ |
-| DevOps (part-time) | CI runners, nightly `slow` tier, environments | | ☐ |
+| DevOps (part-time) | Developer machine setup (JDK 17, Docker), environments and their load balancers | | ☐ |
 | DBA (part-time) | S3 database, logins, role mapping | | ☐ |
 | Tech lead | ADR acceptance, review checkpoints | | ☐ |
 | Business Owner | Regex ban (ADR-002 D6), reorder demo sign-off | | ☐ |
@@ -80,8 +80,8 @@ Dates assume Sprint 0 on 9–13 Nov 2026 and 2-week sprints after it. Shift them
 
 | Review | Proposed date | Entry condition | Attendees |
 |---|---|---|---|
-| Contracts and schema | Thu 26 Nov 2026 (end of S1) | Merged contracts PR; V2–V7 migrations green on both tiers | Tech lead, Dev C, Dev D, DBA |
-| HTTP path | Fri 18 Dec 2026 (mid S3) | US-4.3 / US-7.2 draft PR | Tech lead, Dev C, Dev D |
+| Contracts and schema | Thu 26 Nov 2026 (end of S1) | Contracts merged into `main`; V2–V7 migrations green on both tiers | Tech lead, Dev C, Dev D, DBA |
+| HTTP path | Fri 18 Dec 2026 (mid S3) | US-4.3 / US-7.2 draft branch | Tech lead, Dev C, Dev D |
 | Concurrency | Mon 11 Jan 2027 (start of S5) | US-5.5 design note with sequence diagrams | Tech lead, Dev B, Dev C, QA |
 | R1 security review | Thu 4 Feb 2027 (end of S6) | US-1.2, US-2.2, US-7.3, US-7.6 merged | Tech lead, Dev A, security reviewer |
 

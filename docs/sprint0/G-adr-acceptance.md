@@ -8,7 +8,7 @@ Business Owner signs off on one DSL restriction.
 
 | ADR | Decision | Evidence | Decided by |
 |---|---|---|---|
-| [ADR-003](../adr/ADR-003-boot35-sqlserver.md) | Spring Boot 3.5.14 + Spring Cloud 2025.0.3 on JDK 17. SQL Server 2022 in production; H2 2.3 in `MODE=MSSQLServer` for local runs and the fast tier; Testcontainers SQL Server for the nightly tier. Supersedes [ADR-001](../adr/ADR-001-stack.md) | Probe `tools/stack-probe-b35-mssql`: 24/24 (15 on H2, 9 on SQL Server). Walking skeleton: `verify` 9/9, `verify -Pslow` 12/12 | Tech lead |
+| [ADR-003](../adr/ADR-003-boot35-sqlserver.md) | Spring Boot 3.5.14 + Spring Cloud 2025.0.3 on JDK 17. SQL Server 2022 in production; H2 2.3 in `MODE=MSSQLServer` for local runs and the fast tier; Testcontainers SQL Server for the `slow` tier. Supersedes [ADR-001](../adr/ADR-001-stack.md) | Probe `tools/stack-probe-b35-mssql`: 24/24 (15 on H2, 9 on SQL Server). Walking skeleton: `verify` 9/9, `verify -Pslow` 12/12 | Tech lead |
 | [ADR-002](../adr/ADR-002-expression-engine.md) | `com.dashjoin:jsonata` 0.9.10 behind `GuardedJsonataEvaluator` (rules D1–D7). No restricted-syntax fallback | Hostile suite: library bounds stop 7 of 10 cases; guards close the other 3 | Tech lead; D6 by the Business Owner |
 
 ## Decisions the review must make
@@ -24,7 +24,7 @@ Business Owner signs off on one DSL restriction.
 
 | ADR | Outcome | By | Date | Conditions |
 |---|---|---|---|---|
-| ADR-003 | **Accepted**, with decisions 1 and 4 | Tech lead (Recorded by Sarvesh Belose, 2026-11-05) | 2026-11-05 | Decision 1 as recommended: (a) commercial support if production comes before a Boot 4 move, otherwise (b) patch bumps within 3.5.x. Confirm the branch once the production date is set. Decision 4: SQL Server-only proofs run nightly |
+| ADR-003 | **Accepted**, with decisions 1 and 4 | Tech lead (Recorded by Sarvesh Belose, 2026-11-05) | 2026-11-05 | Decision 1 as recommended: (a) commercial support if production comes before a Boot 4 move, otherwise (b) patch bumps within 3.5.x. Confirm the branch once the production date is set. Decision 4: SQL Server-only proofs run in the `slow` tier (amended 2026-11-05: locally before merge and before each sprint review; there is no CI) |
 | ADR-002 | **Accepted**, with decision 3 | Tech lead (Recorded by Sarvesh Belose, 2026-11-05) | 2026-11-05 | Decision 3: double arithmetic accepted; the DSL reference (US-3.1) states the 2^53 limit |
 | ADR-002 D6 (regex ban) | **Signed off** | Business Owner (Recorded by Sarvesh Belose, 2026-11-05) | 2026-11-05 | No regex literals in R1; revisit after R1 |
 

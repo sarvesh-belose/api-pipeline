@@ -27,7 +27,7 @@ These are different features. Don't use "async" on its own.
 
 | Epic | Folder | Goal |
 |---|---|---|
-| E1 Foundation | [E1-foundation](E1-foundation/) | Runnable, secured, observable service skeleton, reachable through the platform edge |
+| E1 Foundation | [E1-foundation](E1-foundation/) | Runnable, secured, observable service skeleton, reachable on a stable public address |
 | E2 Downstream endpoints | [E2-endpoints](E2-endpoints/) | Register downstream APIs, their timeouts, resilience settings and auth, with change history |
 | E3 Pipeline definitions | [E3-pipeline-definitions](E3-pipeline-definitions/) | Business-editable, validated, versioned pipelines that can be promoted and switched off |
 | E4 Run execution | [E4-run-execution](E4-run-execution/) | Run a pipeline from one inbound call: sequence, mapping, DAG, policies, caller access |
@@ -43,7 +43,7 @@ These are different features. Don't use "async" on its own.
 | [US-1.1](E1-foundation/US-1.1-project-scaffold.md) | Project scaffold & runtime baseline | Must | M | — | R1 |
 | [US-1.2](E1-foundation/US-1.2-jwt-security.md) | Secure APIs with SSO JWT and roles | Must | M | US-1.1 | R1 |
 | [US-1.3](E1-foundation/US-1.3-correlation-structured-logs.md) | Correlation IDs and structured JSON logs | Must | S | US-1.1 | R1 |
-| [US-1.4](E1-foundation/US-1.4-gateway-service-registry-onboarding.md) | Reach apiorch through the platform gateway and service registry | Must | S | US-1.1 | R1 |
+| [US-1.4](E1-foundation/US-1.4-stable-public-address.md) | Publish apiorch on a stable public address | Must | S | US-1.1 | R1 |
 | [US-2.1](E2-endpoints/US-2.1-manage-endpoints.md) | Register & manage downstream endpoints | Must | M | US-1.2 | R1 |
 | [US-2.2](E2-endpoints/US-2.2-downstream-auth-secret-refs.md) | Authenticate to downstream APIs via secret references | Must | M | US-2.1 | R1 |
 | [US-2.3](E2-endpoints/US-2.3-endpoint-change-history.md) | Audit history of endpoint changes | Should | S | US-2.1 | R2 |
@@ -97,7 +97,7 @@ These are different features. Don't use "async" on its own.
 
 | Release | Purpose | Scope | Exit criteria |
 |---|---|---|---|
-| **R1: internal milestone** | Prove the core engine; not offered to the customer | E1 (incl. US-1.4), US-2.1–2.2, US-3.1–3.4, US-4.1–4.4, US-4.6–4.7, US-5.1–5.5, US-5.7, US-7.1–7.7, US-8.1 slice A | Sync and caller-async runs, sequence and DAG with mapping, retries, timeouts, circuit breakers **and backpressure**, crash recovery, cancel and resolve, full activity log incl. caller exchange, metrics, encrypted working data, no-redeploy reorder and rollback, reachable through the platform gateway, and a **runnable reorder demo** |
+| **R1: internal milestone** | Prove the core engine; not offered to the customer | E1 (incl. US-1.4), US-2.1–2.2, US-3.1–3.4, US-4.1–4.4, US-4.6–4.7, US-5.1–5.5, US-5.7, US-7.1–7.7, US-8.1 slice A | Sync and caller-async runs, sequence and DAG with mapping, retries, timeouts, circuit breakers **and backpressure**, crash recovery, cancel and resolve, full activity log incl. caller exchange, metrics, encrypted working data, no-redeploy reorder and rollback, reachable on a stable public address, and a **runnable reorder demo** |
 | **R2: first customer release** | Everything the customer asked for, production-ready | US-2.3, US-3.6–3.7, US-4.8, US-5.8, E6 (except US-6.6), US-7.8, US-7.10, US-8.1 slice B, US-8.2–8.4 | Async steps with complete-while-pending, callback timeouts, caller webhooks, resume, retention, erasure, promotion between environments, NFRs proven (US-8.2), runbook |
 | **R3: enrichment** | Optional power features | US-3.5, US-4.5, US-5.6, US-6.6, US-7.9 | Dry run, conditions, compensation, fixed callback endpoints, tracing |
 
@@ -134,7 +134,7 @@ publish with `FEATURE_NOT_AVAILABLE` until that story lands (US-3.2). The affect
 | Decision: versioned JSON config in DB via admin REST API, with rollback | US-3.1–US-3.4, US-3.6 |
 | Decision: compensation is optional **per step** (a step may declare `compensate`) | US-5.6 |
 | Decision: inbound auth via JWT from existing SSO, no user tables | US-1.2, US-4.8 |
-| Platform: the edge is the platform gateway and Eureka, not a product concern | US-1.4 |
+| Edge: one stable public address per environment (own load balancer); no shared gateway or service registry | US-1.4 |
 | Platform: approvals beyond a one-line four-eyes check belong to the workflow service | US-3.3 |
 | Non-functional targets (§14) | US-8.2, US-7.5, US-8.4 |
 | Personal data protection | US-7.3, US-7.6, US-7.8, US-7.10 |
@@ -217,8 +217,8 @@ Calling System ─POST /api/v1/pipelines/{code}/runs─► RunController (MVC as
   `flyway-core` + `flyway-sqlserver` (Boot 3.5 has no Flyway starter). `RestClient` comes from
   `spring-web`.
 - **Database:** **SQL Server 2022 in production; H2 2.3 in `MODE=MSSQLServer` for the `local`
-  profile and the fast test tier; real SQL Server (Testcontainers, `slow` tag) in the nightly
-  tier** (ADR-003). The rules:
+  profile and the fast test tier; real SQL Server (Testcontainers, `slow` tag) in the local
+  `slow` tier** (ADR-003, README §13). The rules:
   - Migrations and engine SQL are written once, in SQL Server syntax (`UNIQUEIDENTIFIER`,
     `DATETIME2(6)` UTC, `BIT`, `NVARCHAR(MAX)`, `SYSUTCDATETIME()`, `DATEADD`, `TOP`,
     `OFFSET … FETCH`). Flyway reads `db/migration/common` plus `db/migration/{vendor}`.
@@ -402,11 +402,11 @@ stays `SUCCEEDED`, so it can be compensated.
 
 ## 9. API surface
 
-Paths below are the **service's own** paths. Publicly, every one of them is reached through the
-platform gateway under the prefix `/api/apiorch` (US-1.4), which the gateway strips — so
-`POST /api/v1/pipelines/{code}/runs` is called as
-`POST {gateway}/api/apiorch/v1/pipelines/{code}/runs`. `apiorch.callback.public-base-url` must
-therefore be the gateway address including that prefix, because it is handed to external systems.
+Paths below are the public paths. Each environment publishes apiorch on one stable address in
+front of all nodes (its own load balancer or ingress, US-1.4), with no path prefix — so
+`POST /api/v1/pipelines/{code}/runs` is called as `POST {public-base-url}/api/v1/pipelines/{code}/runs`.
+`apiorch.callback.public-base-url` must be that public address, because it is handed to external
+systems.
 
 | Method & path | Role | Story |
 |---|---|---|
@@ -586,12 +586,12 @@ US-5.x and US-6.x.
 | Key | Default | Story |
 |---|---|---|
 | `apiorch.instance-id` | `${HOSTNAME}` or a random UUID | US-5.5 |
-| `spring.application.name` / `eureka.client.service-url.defaultZone` | `apiorch-service` / `http://localhost:9100/eureka/` | US-1.4 |
+| `spring.application.name` | `apiorch-service` | US-1.1 |
 | `spring.jackson.deserialization.fail-on-unknown-properties` | `true` (Boot's auto-configured `ObjectMapper` sets `false`, ADR-003 F7) | US-1.1 |
 | `spring.flyway.locations` | `classpath:db/migration/common,classpath:db/migration/{vendor}` | US-1.1 |
 | `spring.jpa.properties.hibernate.jdbc.time_zone` / `spring.jpa.properties.hibernate.type.preferred_instant_jdbc_type` | `UTC` / `TIMESTAMP` (ADR-003 F6) | US-1.1 |
 | `apiorch.engine.lock-timeout-ms` | `2000` (bounded row-lock wait, ADR-003 F5) | US-5.5 |
-| `eureka.client.enabled` | `true` (`false` in `local` and `test`) | US-1.4 |
+| `server.forward-headers-strategy` / `server.tomcat.remoteip.internal-proxies` | `native` / `10.x.x.x` (trusted load balancer addresses) | US-1.4 |
 | `apiorch.callback.expected-public-host` | — (startup guard outside `local`) | US-1.4 |
 | `apiorch.security.mode` | `jwt` (`dev` is allowed only when `local` is active) | US-1.2 |
 | `apiorch.security.roles-claim` / `apiorch.security.principal-claim` | `roles` / `sub` | US-1.2 |
@@ -670,8 +670,9 @@ Components, API contract, data, configuration, logging/metrics, security, test n
 **Definition of Done (every story):**
 - All ACs are automated. Unit tests cover logic. Integration tests use WireMock for downstream
   APIs and H2 in `MODE=MSSQLServer` for the database.
-- `mvn verify` passes on H2 (no Docker), and the nightly `mvn verify -Pslow` passes against
-  Testcontainers SQL Server 2022.
+- `./mvnw verify` passes on H2 (no Docker) on the developer's machine, and, where the story has
+  `slow` tests or touches migrations or `SqlDialect`, `./mvnw verify -Pslow` passes against
+  Testcontainers SQL Server 2022 before merge (§13).
 - Any AC about row locking, leases, concurrent writers, partitions, grants, `ISJSON` checks or
   filtered indexes has its test in the `slow` tier, on SQL Server (ADR-003 rule 6). Engine SQL runs
   through the shared `DatabaseContract` suite on both databases.
@@ -704,18 +705,19 @@ Components, API contract, data, configuration, logging/metrics, security, test n
   masked), or not at all. The log value masks in US-7.3 are the safety net, and its canary test
   fails the build if a known secret appears in any log line.
 
-**Test tiering.** Tests carry a JUnit tag and run in three tiers, because a suite that takes tens of
-minutes and flakes on shared CI is worse than a smaller one — nobody trusts a red build on a
-resilience product.
+**Test tiering.** There is no CI server: every build and test runs on a developer's machine with
+`./mvnw`. Tests carry a JUnit tag and run in three tiers, so the everyday build stays fast and
+trusted, and the Docker-based tier runs when it matters.
 
 | Tier | Tag | Runs | Contents |
 |---|---|---|---|
-| Fast | none (`*Test`) | Every push, surefire | Unit tests, ArchUnit, table-driven rules |
-| Component | `it` (`*IT`) | Every PR, failsafe | One Spring context, **H2 in MSSQL mode** (no Docker), WireMock |
-| Slow | `slow` | Nightly | **Testcontainers SQL Server 2022.** The `DatabaseContract` suite; every lock, lease, concurrency, partition, grant and `ISJSON` test (ADR-003 rule 6); two-context, multi-minute, race-loop and chaos tests — `LeaseRenewalIT`, `ConcurrentSweepIT`, `CallbackTimeoutBatchIT`, `AdvanceRaceIT`, `OutboxReclaimIT`, `RetentionJobIT` and the rest of US-8.2 |
+| Fast | none (`*Test`) | Every `./mvnw verify`, surefire | Unit tests, ArchUnit, table-driven rules |
+| Component | `it` (`*IT`) | Every `./mvnw verify`, failsafe. Must pass before every commit to `main` | One Spring context, **H2 in MSSQL mode** (no Docker), WireMock |
+| Slow | `slow` | `./mvnw verify -Pslow` (needs Docker): before merging a story that has `slow` tests or touches migrations or `SqlDialect`, and by one developer on the integrated `main` before every sprint review | **Testcontainers SQL Server 2022.** The `DatabaseContract` suite; every lock, lease, concurrency, partition, grant and `ISJSON` test (ADR-003 rule 6); two-context, multi-minute, race-loop and chaos tests — `LeaseRenewalIT`, `ConcurrentSweepIT`, `CallbackTimeoutBatchIT`, `AdvanceRaceIT`, `OutboxReclaimIT`, `RetentionJobIT` and the rest of US-8.2 |
 
-A nightly failure blocks the next release, so the slow tier is not optional — it is simply not in
-the PR path.
+A red slow run blocks the merge and the sprint review demo, so the slow tier is not optional — it
+is simply not part of every build. The result of the pre-review slow run (commit and pass/fail)
+is recorded in the sprint review notes.
 
 **Coverage.** The flat 80% line gate (US-1.1 AC9) is the floor, not the target: it pushes toward
 low-value tests on DTOs while leaving branches in the engine untested. JaCoCo therefore adds a
@@ -757,7 +759,7 @@ What apiorch integrates with rather than builds, and the one place the boundary 
 
 | Capability | Owner | How apiorch relates to it |
 |---|---|---|
-| **Edge** (gateway, service registry) | Platform `api-gateway` + Eureka | **Integrates** (US-1.4). No gateway, no registry server, no second edge in this product |
+| **Edge** (public address) | Each environment's own load balancer or ingress | **Not a platform integration** (US-1.4). apiorch is independent: no shared API gateway and no service registry |
 | **Identity** (users, roles, approval limits) | Platform HRMS adapter | **Integrates by not storing any of it.** Roles come from the SSO JWT claim (US-1.2); there is no user, role or approval-limit table anywhere in §10 |
 | **Workflow and approvals** | Platform workflow-service | **Integrates when needed, nothing today.** US-3.3's `require-four-eyes` is a same-actor check, not an approval chain; anything beyond it (checker queues, DOA, SLA, send-back) goes to the workflow platform |
 | **Audit** | No platform owner yet | **Local, per the interim rule.** `run_event`, `step_attempt` and `endpoint_audit` are product tables. No shared audit service is built |
@@ -765,7 +767,7 @@ What apiorch integrates with rather than builds, and the one place the boundary 
 | **Documents and reports** | Reporting service | **Not used, and nothing built.** No PDF, Word or Excel generation anywhere in this backlog |
 | **Notifications and scheduling** | No platform owner yet | **Local, per the interim rule.** Caller webhooks (US-6.5) are a machine-to-machine protocol, not user notifications. The four scheduled jobs — recovery sweeper, callback-timeout sweeper, outbox dispatcher, retention and partition maintenance — are product-internal and listed here as the rule requires |
 | **Data connectors** | No platform owner yet | **No registry built.** `endpoint` (US-2.1) is this product's own downstream-API table, not a general data-source registry |
-| **Tenancy** | No platform owner yet | Every platform-side name carries the product code: service id and gateway route id `apiorch-service` |
+| **Tenancy** | No platform owner yet | Every externally visible name carries the product code: the service name `apiorch-service` |
 
 **The one judgement worth stating plainly:** the run state machine in E4 and E6 is **legitimately
 local** and must not be pushed onto the workflow platform. It is a data-plane execution engine for

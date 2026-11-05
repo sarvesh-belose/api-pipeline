@@ -45,7 +45,7 @@ Every ERROR log and every metric listed in US-7.5 AC6 must map to an entry.
   every ERROR-level log message in the code base. A test greps `log.error(` messages and checks
   each has a runbook anchor.
 - [ ] **AC2:** Given `ops/alerts/apiorch-rules.yml`, when `promtool check rules` and
-  `promtool test rules ops/alerts/tests/*.yml` run in CI, then all rules are valid, and each
+  `promtool test rules ops/alerts/tests/*.yml` run in the local build, then all rules are valid, and each
   rule has a unit test with firing and non-firing series.
 - [ ] **AC3:** Given each runbook remediation that uses an apiorch API, then the entry contains a
   copy-paste `curl` example that works against the `local` demo (US-8.1). The examples are
@@ -58,7 +58,8 @@ Every ERROR log and every metric listed in US-7.5 AC6 must map to an entry.
 **Files:** `docs/runbook.md`, `ops/alerts/apiorch-rules.yml`, `ops/alerts/tests/*.yml` and
 `ops/dashboards/apiorch.json` (optional).
 
-**CI:** a `promtool` container step in the build pipeline, plus `RunbookCoverageTest` (AC1).
+**Build:** `PromtoolRulesIT` (`slow`) runs `promtool` in a Testcontainers container against the
+rule files, plus `RunbookCoverageTest` (AC1).
 
 **Test notes**
 - `RunbookCoverageTest` covers AC1.

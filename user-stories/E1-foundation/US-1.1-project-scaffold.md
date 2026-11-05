@@ -11,7 +11,7 @@ will run on in production.
 This story creates the `apiorch-service` Maven project in `D:\workspace_sv\api-pipeline` with:
 - profiles `local`, `test` and `prod` (README §5.2, ADR-003): `local` and `test` on H2 2.3
   in-memory in `MODE=MSSQLServer` (no Docker), `prod` on SQL Server 2022. Real SQL Server also
-  runs in the nightly `slow` tier through Testcontainers (ADR-003 rule 6);
+  runs in the local `slow` tier through Testcontainers (ADR-003 rule 6, README §13);
 - Flyway owning the schema (Hibernate `ddl-auto: none`), with one SQL text in SQL Server syntax,
   `common/` plus `{vendor}` migration folders (ADR-003 rules 1–3), and a migration test;
 - actuator liveness and readiness probes on a separate management port;
@@ -63,7 +63,7 @@ This story creates the `apiorch-service` Maven project in `D:\workspace_sv\api-p
   either.
 - [ ] **AC10 (test tiers):** Given the build, when `mvnw verify` runs, then surefire runs `*Test`
   and failsafe runs `*IT` **excluding** the `slow` tag, and `mvnw verify -Pslow` runs the slow tier.
-  A test tagged `slow` therefore never runs in the PR pipeline (README §13).
+  A test tagged `slow` therefore never runs in the everyday `mvnw verify` build (README §13).
 - [ ] **AC11 (architecture rules):** Given `ArchUnitRulesTest`, when it runs, then it fails on: a
   class in `engine`, `expression` or `definition` referencing an HTTP client, `JdbcClient` or a
   repository; an HTTP client call inside a `@Transactional` method; a write to `pipeline_run`
@@ -100,7 +100,8 @@ api-pipeline/
 **pom.xml**
 - `spring-boot-starter-parent` **3.5.14** (ADR-003), `maven.compiler.release=17`,
   groupId `com.crisil`, artifactId `apiorch-service`. `spring-cloud-dependencies` **2025.0.3**
-  is imported in `dependencyManagement` for US-1.4.
+  is imported in `dependencyManagement` (ADR-003). No R1 story needs a Spring Cloud module since
+  US-1.4 dropped the service registry; the import is harmless and kept until the tech lead decides.
 - **Dependencies** (ADR-003 "Starter and module names on Boot 3.5"):
   - Boot starters: `spring-boot-starter-web`, `-validation`, `-data-jpa` and `-actuator`.
     There is no Flyway starter and no `-restclient` starter on Boot 3.5; `RestClient` comes with
@@ -192,7 +193,8 @@ carries `correlationId` (US-1.3).
 
 **Test notes**
 - Two tiers (ADR-003 Consequences): the fast tier runs on H2 with no Docker and gates every
-  merge; the nightly `slow` tier runs on SQL Server 2022 through Testcontainers
+  commit; the local `slow` tier (`./mvnw verify -Pslow`, before merge and before each sprint
+  review) runs on SQL Server 2022 through Testcontainers
   (`MSSQLServerContainer`, `.acceptLicense()`, `@ServiceConnection`). Anything about locking,
   concurrency, leases, partitions, grants or `ISJSON` is proven in the `slow` tier (ADR-003 rule 6).
 - `ApplicationSmokeIT` (H2) covers AC2 and AC3's readiness/liveness split when the database is
@@ -208,7 +210,7 @@ carries `correlationId` (US-1.3).
 - `StrictJsonBindingIT` posts a typed body with an unknown property and expects `400`, and
   asserts that the Boot-managed `ObjectMapper` has `FAIL_ON_UNKNOWN_PROPERTIES` enabled (AC12).
 - `TestTieringTest` asserts that every `*IT` carries either no tag or `slow`, so a new slow test
-  cannot silently join the PR pipeline (AC10).
+  cannot silently join the everyday build (AC10).
 
 **Clock:** `config.TimeConfig` exposes a single `Clock` bean (`Clock.systemUTC()` in production, a
 `MutableClock` in tests). Every component takes it by constructor. Database time
