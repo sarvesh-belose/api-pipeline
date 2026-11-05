@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Proposed. **Supersedes [ADR-001](ADR-001-stack.md)**. The tech lead accepts it at the Sprint 0 review (R1 plan §3, gate G1) |
+| **Status** | **Accepted 2026-11-05** at the Sprint 0 review (R1 plan §3, gate G1), with review decisions 1 and 4 as recommended ([acceptance record](../sprint0/G-adr-acceptance.md)). **Supersedes [ADR-001](ADR-001-stack.md)** |
 | **Date** | 2026-11-04 |
 | **Gate** | G1 (re-run) in [R1-implementation-plan.md](../R1-implementation-plan.md) §3; US-1.1 "scaffold check" |
 | **Decision** | **Spring Boot 3.5.14 + Spring Cloud 2025.0.3 on JDK 17. SQL Server in production; H2 2.3 in `MODE=MSSQLServer` for local runs and the fast test tier; real SQL Server (Testcontainers) for the nightly tier** |
@@ -183,4 +183,5 @@ The fast tier needs no Docker.
 1. Apply F1–F16 to the README (§5.1, §5.2, §10, §11, §13, §14), the affected stories and the R1
    plan.
 2. Mark ADR-001 superseded.
-3. Tech lead acceptance at the Sprint 0 review.
+3. ~~Tech lead acceptance at the Sprint 0 review.~~ Done 2026-11-05.
+4. Support path (review decision 1): commercial support if production comes before a Boot 4 move, otherwise patch bumps within 3.5.x. Confirm which branch applies once the production date is set, and record the Boot 4 move as its own dated ADR.

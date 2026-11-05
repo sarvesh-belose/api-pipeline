@@ -1,7 +1,7 @@
 # G1/G2: ADR acceptance pack (Sprint 0 review)
 
-**Status:** prepared, not yet reviewed. The tech lead accepts; the Business Owner signs off on one
-DSL restriction.
+**Status:** **reviewed 2026-11-05. Both ADRs accepted; D6 signed off.** The tech lead accepts; the
+Business Owner signs off on one DSL restriction.
 **Sprint 0 exit:** "ADR-003 (superseding ADR-001) and ADR-002 accepted" (R1 plan §3).
 
 ## What is being accepted
@@ -24,8 +24,9 @@ DSL restriction.
 
 | ADR | Outcome | By | Date | Conditions |
 |---|---|---|---|---|
-| ADR-003 | Accepted / Rejected / Changes requested | | | Decision 1: ____ |
-| ADR-002 | Accepted / Rejected / Changes requested | | | |
-| ADR-002 D6 (regex ban) | Signed off / Not signed off | Business Owner: | | |
+| ADR-003 | **Accepted**, with decisions 1 and 4 | Tech lead (Recorded by Sarvesh Belose, 2026-11-05) | 2026-11-05 | Decision 1 as recommended: (a) commercial support if production comes before a Boot 4 move, otherwise (b) patch bumps within 3.5.x. Confirm the branch once the production date is set. Decision 4: SQL Server-only proofs run nightly |
+| ADR-002 | **Accepted**, with decision 3 | Tech lead (Recorded by Sarvesh Belose, 2026-11-05) | 2026-11-05 | Decision 3: double arithmetic accepted; the DSL reference (US-3.1) states the 2^53 limit |
+| ADR-002 D6 (regex ban) | **Signed off** | Business Owner (Recorded by Sarvesh Belose, 2026-11-05) | 2026-11-05 | No regex literals in R1; revisit after R1 |
 
-After the review, set each ADR's **Status** row to the outcome, with the name and date.
+Each ADR's **Status** row is updated to the outcome (2026-11-05). Approver names were not given in the
+review record; add them here if your process needs named approvers.
