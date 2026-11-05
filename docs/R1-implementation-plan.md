@@ -219,16 +219,20 @@ US-1.2 (Sprint 2).
 (`RunDecision`, `RunContext`). Until US-4.3 the production step executor fails every step with
 `STEP_EXECUTOR_UNAVAILABLE`.
 
-**Sprint 3 status (2026-11-05): in progress** on `sprint3/*` branches; both tiers green (`verify -Pslow`, 327 tests).
+**Sprint 3 status (2026-11-05): in progress** on `sprint3/*` branches; both tiers green (`verify -Pslow`, 340 tests).
 
 | Planned | Delivered | Still to do this sprint |
 |---|---|---|
 | Finish US-3.3 → US-3.4 → US-4.2 | US-3.3 complete: `POST …/{code}/publish` under the `pipeline` row lock, canonical SHA-256 checksum (keys sorted, step order kept), `no-changes`, `version-conflict` for a lost race (H2 and SQL Server), optional four-eyes, `GET …/versions`, `…/versions/{v\|latest}`; latest-version cache (5 s TTL, evicted on publish after commit). US-3.4 complete: semantic diff (`…/versions/{v}/diff?against=`, order, plan, added/removed steps, dotted field changes, effective `dependsOn`, settings) and `POST …/rollback?to=k` (re-validated, republished as N+1 with `sourceVersion`/`sourceChecksum`, draft untouched). US-4.2 complete: immediate `202` with an `ACCEPTED` resource, `Prefer: respond-async` with `Preference-Applied`, `Retry-After: 2` while not done, creator-only reads (`404 run-not-found` for others, ops see all), malformed IDs `404`, cross-node poll from the database | — |
-| US-4.3 paired with US-7.2 → US-7.3 | — | All three |
+| US-4.3 paired with US-7.2 → US-7.3 | US-4.3: `HttpStepExecutor` (request from the context snapshot, encoded path segments with unsafe ones refused, query, protected outbound headers, `successWhen` on top of 2xx, `HTTP_ERROR`, `EXPRESSION_ERROR`, `RESPONSE_TOO_LARGE`, non-JSON as string, 204 as `null`, exact large integers); steps left pending by a stopped run are `CANCELLED`. US-7.2: one `step_attempt` row per call with true sizes, timing and `event_seq` of `REQUEST_SENT`, written with `RESPONSE_RECEIVED`/`TOKEN_REFRESHED` in the outcome's fenced transaction; capture levels `METADATA` (default), `HEADERS`, `FULL`; credential headers masked | US-7.3 (`maskKeys`, masking before truncation, US-7.2 AC3); retry rows and rejections (US-7.2 AC2, AC5 rejections) arrive with E5; a step-level `TOKEN_REFRESHED` test and the 32-run concurrency and recursion-budget ITs (US-4.3 AC10) |
 | US-7.6 core, US-7.5 core | — | `ContextCipher`, `ApiorchMetrics` facade |
 
-**Note:** `ReorderNoRedeployIT` reads step order from the stub executor; it adds the WireMock request-order check
-once US-4.3 lands. Cross-node convergence is shown by a version written straight to the table (no local event)
+**Deviation (US-4.3):** `REQUEST_SENT` is written in its own short fenced transaction just before the call (so a
+node that lost the run sends nothing); the attempt row, `RESPONSE_RECEIVED` and the step outcome commit together
+afterwards. `HttpStepExecutor` replaces the placeholder executor.
+
+**Note:** `ReorderNoRedeployIT` reads step order from the stub executor; the WireMock request order for v1 and the
+reordered version is asserted in `SequentialRunIT`. Cross-node convergence is shown by a version written straight to the table (no local event)
 being picked up within the TTL; the two-context version waits for `ClusterTestSupport` engine hooks (US-5.5).
 
 ## 7. Cross-cutting enablers (in Sprint 1, so the four tracks don't block each other)

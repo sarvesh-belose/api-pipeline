@@ -3,7 +3,9 @@ package com.crisil.apiorch.http;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import org.springframework.web.util.UriComponentsBuilder;
 
@@ -31,17 +33,31 @@ public final class UriBuilder {
     }
 
     public static URI build(String baseUrl, List<String> segments) {
+        return build(baseUrl, segments, Map.of());
+    }
+
+    /** As {@link #build(String, List)}, with query parameters in {@code query}'s order, each value encoded. */
+    public static URI build(String baseUrl, List<String> segments, Map<String, String> query) {
         for (String segment : segments) {
             if (segment.isEmpty() || segment.equals(".") || segment.equals("..")) {
                 throw new IllegalArgumentException("Path segment '" + segment + "' is not allowed");
             }
         }
         URI base = URI.create(baseUrl);
-        URI built = UriComponentsBuilder.fromUriString(baseUrl)
-                .pathSegment(segments.toArray(String[]::new))
-                .encode()
-                .build()
-                .toUri();
+        // values go in as template variables, so a brace in a value is data and every value is strictly encoded
+        UriComponentsBuilder builder = UriComponentsBuilder.fromUriString(baseUrl);
+        Map<String, String> variables = new HashMap<>();
+        for (String segment : segments) {
+            String name = "v" + variables.size();
+            variables.put(name, segment);
+            builder.pathSegment("{" + name + "}");
+        }
+        for (Map.Entry<String, String> param : query.entrySet()) {
+            String name = "v" + variables.size();
+            variables.put(name, param.getValue());
+            builder.queryParam(param.getKey(), "{" + name + "}");
+        }
+        URI built = builder.encode().buildAndExpand(variables).toUri();
         verify(base, built);
         return built;
     }

@@ -24,8 +24,8 @@ import testsupport.web.Http;
 
 /**
  * US-4.2 AC6: a run started and finished on node B is polled on node A, which returns the persisted state. Two
- * contexts share one named H2 database. Nodes run the production step executor, so the run ends {@code FAILED}
- * with {@code STEP_EXECUTOR_UNAVAILABLE} until US-4.3; what matters here is that A reports B's final state.
+ * contexts share one named H2 database. The step's endpoint is not registered, so the run ends {@code FAILED} with
+ * {@code ENDPOINT_NOT_FOUND} on B at once; what matters here is that A reports B's final state.
  */
 class CrossNodePollIT {
 
@@ -59,7 +59,7 @@ class CrossNodePollIT {
         assertThat(polled.statusCode()).as(polled.body()).isEqualTo(200);
         JsonNode resource = DslJsonMapper.get().readTree(polled.body());
         assertThat(resource.path("status").asText()).isEqualTo("FAILED");
-        assertThat(resource.at("/errors/0/code").asText()).isEqualTo("STEP_EXECUTOR_UNAVAILABLE");
+        assertThat(resource.at("/errors/0/code").asText()).isEqualTo("ENDPOINT_NOT_FOUND");
         assertThat(polled.headers().firstValue("Retry-After")).isEmpty();
     }
 }

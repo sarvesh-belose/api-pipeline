@@ -22,6 +22,8 @@ import com.crisil.apiorch.config.ApiorchProperties;
 import com.crisil.apiorch.config.ExecutorConfig;
 import com.crisil.apiorch.definition.CompiledPipeline;
 import com.crisil.apiorch.definition.CompiledStep;
+import com.crisil.apiorch.definition.PipelineDefinition;
+import com.crisil.apiorch.definition.PipelineDefinition.Capture;
 import com.crisil.apiorch.definition.StepDefinition.OnFailure;
 import com.crisil.apiorch.engine.Lease;
 import com.crisil.apiorch.engine.LeaseLostException;
@@ -35,9 +37,12 @@ import com.crisil.apiorch.expression.ExpressionEvaluator;
 import com.crisil.apiorch.expression.ExpressionException;
 import com.crisil.apiorch.observability.ActivityRecorder;
 import com.crisil.apiorch.observability.ActivityRecorder.StepRef;
+import com.crisil.apiorch.observability.AttemptRecord;
+import com.crisil.apiorch.observability.AttemptWriter;
 import com.crisil.apiorch.observability.EventType;
 import com.crisil.apiorch.observability.MdcSupport;
 import com.crisil.apiorch.persistence.RunRows;
+import com.crisil.apiorch.step.StepAttempt;
 import com.crisil.apiorch.step.StepExecutor;
 import com.crisil.apiorch.step.StepInvocation;
 import com.crisil.apiorch.step.StepOutcome;
@@ -63,12 +68,15 @@ public class RunCoordinator {
     private final ThreadPoolTaskExecutor stepIo;
     private final RunCompletionNotifier notifier;
     private final ExpressionEvaluator evaluator;
+    private final AttemptWriter attempts;
     private final long defaultRunTimeoutMs;
+
+    static final int DEFAULT_MAX_BODY_BYTES = 262_144;
 
     public RunCoordinator(TransactionTemplate tx, RunRows rows, RunLeaseService leases, ActivityRecorder recorder,
             PublishedPipelines pipelines, StepExecutor executor,
             @Qualifier(ExecutorConfig.STEP_IO) ThreadPoolTaskExecutor stepIo, RunCompletionNotifier notifier,
-            ExpressionEvaluator evaluator, ApiorchProperties properties) {
+            ExpressionEvaluator evaluator, AttemptWriter attempts, ApiorchProperties properties) {
         this.tx = tx;
         this.rows = rows;
         this.leases = leases;
@@ -78,6 +86,7 @@ public class RunCoordinator {
         this.stepIo = stepIo;
         this.notifier = notifier;
         this.evaluator = evaluator;
+        this.attempts = attempts;
         this.defaultRunTimeoutMs = properties.run().defaultRunTimeoutMs();
     }
 
@@ -125,7 +134,11 @@ public class RunCoordinator {
         }
         RunDecision.Next next = RunDecision.decide(pipeline, states);
         for (RunDecision.Skip skip : next.skip()) {
-            rows.skipStep(run.id(), skip.stepId(), skip.reason());
+            if (skip.reason().equals("RUN_STOPPED")) {
+                rows.cancelStep(run.id(), skip.stepId());
+            } else {
+                rows.skipStep(run.id(), skip.stepId(), skip.reason());
+            }
             recorder.record(run.id(), EventType.STEP_SKIPPED, StepRef.of(skip.stepId(), 1),
                     Map.of("reason", skip.reason()), null);
         }
@@ -159,6 +172,10 @@ public class RunCoordinator {
                 MdcSupport.Scope stepScope = MdcSupport.withStep(invocation.step().id(), 1)) {
             try {
                 outcome = executor.execute(invocation);
+            } catch (LeaseLostException e) {
+                log.warn("lease lost runId={} epoch={}; {} not sent", invocation.runId(), invocation.lease().epoch(),
+                        invocation.step().id());
+                return;
             } catch (RuntimeException e) {
                 log.error("step executor failed unexpectedly", e);
                 outcome = StepOutcome.failed(null, "INTERNAL_ERROR", "Step execution failed unexpectedly", 0, 0);
@@ -185,6 +202,7 @@ public class RunCoordinator {
         java.util.UUID runId = invocation.runId();
         CompiledStep step = invocation.step();
         StepRef ref = StepRef.of(step.id(), invocation.execNo());
+        storeAttempts(invocation, outcome);
         if (outcome.status() == StepOutcome.Status.SUCCEEDED) {
             rows.putContext(runId, step.id(), RunContext.stepResult(outcome.httpStatus(), outcome.headers(),
                     outcome.body()));
@@ -208,6 +226,38 @@ public class RunCoordinator {
                 outcome.durationMs(), outcome.errorCode(), outcome.errorMessage(), false, seq);
         if (policy != OnFailure.CONTINUE) {
             rows.stop(runId, "FAIL_RUN", outcome.errorCode(), outcome.errorMessage(), step.id());
+        }
+    }
+
+    /**
+     * The attempt rows and their events, in the outcome's transaction (US-7.2 AC6): {@code TOKEN_REFRESHED} for a
+     * repeated OAuth2 call, {@code RESPONSE_RECEIVED} when a response arrived, then the complete attempt row.
+     */
+    private void storeAttempts(StepInvocation invocation, StepOutcome outcome) {
+        if (outcome.trail().isEmpty()) {
+            return;
+        }
+        PipelineDefinition definition = pipelines.compiled(invocation.pipeline(), invocation.version()).definition();
+        PipelineDefinition.LoggingSpec stepLogging = invocation.step().definition().logging();
+        PipelineDefinition.LoggingSpec pipelineLogging = definition.logging();
+        Capture capture = stepLogging != null && stepLogging.capture() != null ? stepLogging.capture()
+                : pipelineLogging != null && pipelineLogging.capture() != null ? pipelineLogging.capture()
+                : Capture.METADATA;
+        int maxBody = stepLogging != null && stepLogging.maxBodyBytes() != null ? stepLogging.maxBodyBytes()
+                : pipelineLogging != null && pipelineLogging.maxBodyBytes() != null ? pipelineLogging.maxBodyBytes()
+                : DEFAULT_MAX_BODY_BYTES;
+        for (StepAttempt attempt : outcome.trail()) {
+            AttemptRecord a = attempt.record();
+            StepRef ref = StepRef.attempt(a.stepId(), a.execNo(), a.attemptNo());
+            for (String endpoint : attempt.tokenRefreshes()) {
+                recorder.record(a.runId(), EventType.TOKEN_REFRESHED, ref, Map.of("endpoint", endpoint), null);
+            }
+            if (attempt.responseReceived()) {
+                recorder.record(a.runId(), EventType.RESPONSE_RECEIVED, ref, details("httpStatus", a.responseStatus(),
+                        "durationMs", a.durationMs(), "requestBytes", a.requestBytes(), "responseBytes",
+                        a.responseBytes()), null);
+            }
+            attempts.write(a, capture, maxBody);
         }
     }
 
