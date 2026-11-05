@@ -1,5 +1,7 @@
 package com.crisil.apiorch.step;
 
+import java.util.List;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.MissingNode;
 
@@ -10,6 +12,8 @@ import com.fasterxml.jackson.databind.node.MissingNode;
  * @param errorCode a step error code ({@code HTTP_ERROR}, {@code TIMEOUT}, {@code CONNECT_ERROR},
  *                  {@code SUCCESS_CHECK_FAILED}, {@code EXPRESSION_ERROR}, {@code ENDPOINT_DISABLED},
  *                  {@code CIRCUIT_OPEN}, {@code RESPONSE_TOO_LARGE}, …) when {@code status} is {@link Status#FAILED}
+ * @param trail     the attempts made, in order, for the coordinator to store with the step's outcome (US-7.2);
+ *                  empty when nothing was sent
  */
 public record StepOutcome(
         Status status,
@@ -19,7 +23,8 @@ public record StepOutcome(
         int attempts,
         long durationMs,
         String errorCode,
-        String errorMessage) {
+        String errorMessage,
+        List<StepAttempt> trail) {
 
     public enum Status {
         SUCCEEDED,
@@ -29,12 +34,18 @@ public record StepOutcome(
     }
 
     public static StepOutcome succeeded(int httpStatus, JsonNode headers, JsonNode body, int attempts, long durationMs) {
-        return new StepOutcome(Status.SUCCEEDED, httpStatus, headers, body, attempts, durationMs, null, null);
+        return new StepOutcome(Status.SUCCEEDED, httpStatus, headers, body, attempts, durationMs, null, null, List.of());
     }
 
     public static StepOutcome failed(Integer httpStatus, String errorCode, String errorMessage, int attempts,
             long durationMs) {
         return new StepOutcome(Status.FAILED, httpStatus, MissingNode.getInstance(), MissingNode.getInstance(),
-                attempts, durationMs, errorCode, errorMessage);
+                attempts, durationMs, errorCode, errorMessage, List.of());
+    }
+
+    /** This outcome with the attempts that produced it. */
+    public StepOutcome withTrail(List<StepAttempt> attempts) {
+        return new StepOutcome(status, httpStatus, headers, body, this.attempts, durationMs, errorCode, errorMessage,
+                List.copyOf(attempts));
     }
 }

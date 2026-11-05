@@ -31,16 +31,30 @@ public record ApiorchProperties(
         @Valid @DefaultValue Expression expression,
         @Valid @DefaultValue Lease lease,
         @Valid @DefaultValue Engine engine,
-        @Valid @DefaultValue Executor executor) {
+        @Valid @DefaultValue Executor executor,
+        @Valid @DefaultValue Logging logging) {
+
+    /** US-7.2, US-7.3: what attempt rows keep, and what is always masked. */
+    public record Logging(
+            @DefaultValue("METADATA") @NotNull com.crisil.apiorch.definition.PipelineDefinition.Capture defaultCapture,
+            @DefaultValue("262144") @Min(0) @Max(5242880) int defaultMaxBodyBytes,
+            @DefaultValue({"Authorization", "Proxy-Authorization", "Cookie", "Set-Cookie", "X-Api-Key",
+                    "X-Callback-Token"}) List<@NotBlank String> alwaysMaskHeaders,
+            @DefaultValue({"password", "secret", "token", "otp", "pin", "clientSecret", "client_secret",
+                    "accessToken", "access_token", "refreshToken", "refresh_token"}) List<@NotBlank String> alwaysMaskKeys,
+            @DefaultValue("false") boolean includeBodiesInLogs) {
+    }
 
     /** US-1.3. */
     public record Correlation(@DefaultValue("X-Correlation-Id") @NotBlank @Pattern(regexp = "[A-Za-z0-9-]+") String header) {
     }
 
-    /** US-3.1. */
+    /** US-3.1, US-3.3. */
     public record Definition(
             @DefaultValue("524288") @Min(1024) long maxDocumentBytes,
-            @DefaultValue("50") @Min(1) @Max(500) int maxSteps) {
+            @DefaultValue("50") @Min(1) @Max(500) int maxSteps,
+            @DefaultValue("5000") @Min(0) long latestCacheTtlMs,
+            @DefaultValue("false") boolean requireFourEyes) {
     }
 
     /** US-4.1. */

@@ -140,7 +140,7 @@ class SyncRunIT {
         assertThat(run.at("/errors/0/code").asText()).isEqualTo("HTTP_ERROR");
         assertThat(run.at("/errors/0/httpStatus").asInt()).isEqualTo(503);
         assertThat(run.path("steps").findValuesAsText("status")).containsExactly("SUCCEEDED", "SUCCEEDED", "FAILED",
-                "SKIPPED", "SKIPPED");
+                "CANCELLED", "CANCELLED");
         assertThat(stub.invokedStepIds()).doesNotContain("api4", "api5");
     }
 

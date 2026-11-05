@@ -1,5 +1,7 @@
 package com.crisil.apiorch.run;
 
+import java.time.Clock;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -22,6 +24,8 @@ import com.crisil.apiorch.config.ApiorchProperties;
 import com.crisil.apiorch.config.ExecutorConfig;
 import com.crisil.apiorch.definition.CompiledPipeline;
 import com.crisil.apiorch.definition.CompiledStep;
+import com.crisil.apiorch.definition.PipelineDefinition;
+import com.crisil.apiorch.definition.PipelineDefinition.Capture;
 import com.crisil.apiorch.definition.StepDefinition.OnFailure;
 import com.crisil.apiorch.engine.Lease;
 import com.crisil.apiorch.engine.LeaseLostException;
@@ -34,10 +38,16 @@ import com.crisil.apiorch.engine.StepStatus;
 import com.crisil.apiorch.expression.ExpressionEvaluator;
 import com.crisil.apiorch.expression.ExpressionException;
 import com.crisil.apiorch.observability.ActivityRecorder;
+import com.crisil.apiorch.observability.ApiorchMetrics;
 import com.crisil.apiorch.observability.ActivityRecorder.StepRef;
+import com.crisil.apiorch.observability.AttemptRecord;
+import com.crisil.apiorch.observability.AttemptWriter;
+import com.crisil.apiorch.observability.MaskingPolicy;
+import com.crisil.apiorch.http.EndpointClientRegistry;
 import com.crisil.apiorch.observability.EventType;
 import com.crisil.apiorch.observability.MdcSupport;
 import com.crisil.apiorch.persistence.RunRows;
+import com.crisil.apiorch.step.StepAttempt;
 import com.crisil.apiorch.step.StepExecutor;
 import com.crisil.apiorch.step.StepInvocation;
 import com.crisil.apiorch.step.StepOutcome;
@@ -63,12 +73,18 @@ public class RunCoordinator {
     private final ThreadPoolTaskExecutor stepIo;
     private final RunCompletionNotifier notifier;
     private final ExpressionEvaluator evaluator;
+    private final AttemptWriter attempts;
+    private final EndpointClientRegistry endpoints;
+    private final ApiorchProperties.Logging logging;
+    private final ApiorchMetrics metrics;
+    private final Clock clock;
     private final long defaultRunTimeoutMs;
 
     public RunCoordinator(TransactionTemplate tx, RunRows rows, RunLeaseService leases, ActivityRecorder recorder,
             PublishedPipelines pipelines, StepExecutor executor,
             @Qualifier(ExecutorConfig.STEP_IO) ThreadPoolTaskExecutor stepIo, RunCompletionNotifier notifier,
-            ExpressionEvaluator evaluator, ApiorchProperties properties) {
+            ExpressionEvaluator evaluator, AttemptWriter attempts, EndpointClientRegistry endpoints,
+            ApiorchMetrics metrics, Clock clock, ApiorchProperties properties) {
         this.tx = tx;
         this.rows = rows;
         this.leases = leases;
@@ -78,6 +94,11 @@ public class RunCoordinator {
         this.stepIo = stepIo;
         this.notifier = notifier;
         this.evaluator = evaluator;
+        this.attempts = attempts;
+        this.endpoints = endpoints;
+        this.logging = properties.logging();
+        this.metrics = metrics;
+        this.clock = clock;
         this.defaultRunTimeoutMs = properties.run().defaultRunTimeoutMs();
     }
 
@@ -102,6 +123,7 @@ public class RunCoordinator {
             scheduled = tx.execute(s -> schedule(lease));
         } catch (LeaseLostException e) {
             log.warn("lease lost runId={} epoch={}", lease.runId(), lease.epoch());
+            metrics.leaseLost();
             return;
         }
         for (StepInvocation invocation : scheduled) {
@@ -125,7 +147,11 @@ public class RunCoordinator {
         }
         RunDecision.Next next = RunDecision.decide(pipeline, states);
         for (RunDecision.Skip skip : next.skip()) {
-            rows.skipStep(run.id(), skip.stepId(), skip.reason());
+            if (skip.reason().equals("RUN_STOPPED")) {
+                rows.cancelStep(run.id(), skip.stepId());
+            } else {
+                rows.skipStep(run.id(), skip.stepId(), skip.reason());
+            }
             recorder.record(run.id(), EventType.STEP_SKIPPED, StepRef.of(skip.stepId(), 1),
                     Map.of("reason", skip.reason()), null);
         }
@@ -159,6 +185,11 @@ public class RunCoordinator {
                 MdcSupport.Scope stepScope = MdcSupport.withStep(invocation.step().id(), 1)) {
             try {
                 outcome = executor.execute(invocation);
+            } catch (LeaseLostException e) {
+                log.warn("lease lost runId={} epoch={}; {} not sent", invocation.runId(), invocation.lease().epoch(),
+                        invocation.step().id());
+                metrics.leaseLost();
+                return;
             } catch (RuntimeException e) {
                 log.error("step executor failed unexpectedly", e);
                 outcome = StepOutcome.failed(null, "INTERNAL_ERROR", "Step execution failed unexpectedly", 0, 0);
@@ -175,7 +206,15 @@ public class RunCoordinator {
         } catch (LeaseLostException e) {
             log.warn("lease lost runId={} epoch={}; discarding the result of {}", lease.runId(), lease.epoch(),
                     invocation.step().id());
+            metrics.leaseLost();
             return;
+        }
+        metrics.stepFinished(invocation.pipeline(), invocation.step().id(), invocation.step().definition().endpoint(),
+                outcome.errorCode() != null ? outcome.errorCode() : outcome.status().name(),
+                java.time.Duration.ofMillis(outcome.durationMs()));
+        for (StepAttempt attempt : outcome.trail()) {
+            metrics.attempt(attempt.record().endpointName(), attempt.record().outcome(), attempt.record().requestBytes(),
+                    attempt.record().responseBytes());
         }
         advance(lease);
     }
@@ -185,6 +224,7 @@ public class RunCoordinator {
         java.util.UUID runId = invocation.runId();
         CompiledStep step = invocation.step();
         StepRef ref = StepRef.of(step.id(), invocation.execNo());
+        storeAttempts(invocation, outcome);
         if (outcome.status() == StepOutcome.Status.SUCCEEDED) {
             rows.putContext(runId, step.id(), RunContext.stepResult(outcome.httpStatus(), outcome.headers(),
                     outcome.body()));
@@ -209,6 +249,55 @@ public class RunCoordinator {
         if (policy != OnFailure.CONTINUE) {
             rows.stop(runId, "FAIL_RUN", outcome.errorCode(), outcome.errorMessage(), step.id());
         }
+    }
+
+    /**
+     * The attempt rows and their events, in the outcome's transaction (US-7.2 AC6): {@code TOKEN_REFRESHED} for a
+     * repeated OAuth2 call, {@code RESPONSE_RECEIVED} when a response arrived, then the complete attempt row.
+     */
+    private void storeAttempts(StepInvocation invocation, StepOutcome outcome) {
+        if (outcome.trail().isEmpty()) {
+            return;
+        }
+        PipelineDefinition definition = pipelines.compiled(invocation.pipeline(), invocation.version()).definition();
+        PipelineDefinition.LoggingSpec stepLogging = invocation.step().definition().logging();
+        PipelineDefinition.LoggingSpec pipelineLogging = definition.logging();
+        Capture capture = stepLogging != null && stepLogging.capture() != null ? stepLogging.capture()
+                : pipelineLogging != null && pipelineLogging.capture() != null ? pipelineLogging.capture()
+                : logging.defaultCapture();
+        int maxBody = stepLogging != null && stepLogging.maxBodyBytes() != null ? stepLogging.maxBodyBytes()
+                : pipelineLogging != null && pipelineLogging.maxBodyBytes() != null ? pipelineLogging.maxBodyBytes()
+                : logging.defaultMaxBodyBytes();
+        MaskingPolicy policy = maskingPolicy(invocation.step(), pipelineLogging, stepLogging);
+        for (StepAttempt attempt : outcome.trail()) {
+            AttemptRecord a = attempt.record();
+            StepRef ref = StepRef.attempt(a.stepId(), a.execNo(), a.attemptNo());
+            for (String endpoint : attempt.tokenRefreshes()) {
+                recorder.record(a.runId(), EventType.TOKEN_REFRESHED, ref, Map.of("endpoint", endpoint), null);
+            }
+            if (attempt.responseReceived()) {
+                recorder.record(a.runId(), EventType.RESPONSE_RECEIVED, ref, details("httpStatus", a.responseStatus(),
+                        "durationMs", a.durationMs(), "requestBytes", a.requestBytes(), "responseBytes",
+                        a.responseBytes()), null);
+            }
+            attempts.write(a, capture, maxBody, policy);
+        }
+    }
+
+    /** The global lists, the pipeline's and step's {@code maskKeys}, and the endpoint's API key header (US-7.3). */
+    private MaskingPolicy maskingPolicy(CompiledStep step, PipelineDefinition.LoggingSpec pipelineLogging,
+            PipelineDefinition.LoggingSpec stepLogging) {
+        List<String> headers = new ArrayList<>(logging.alwaysMaskHeaders());
+        endpoints.get(step.definition().endpoint()).map(r -> r.config().auth())
+                .filter(auth -> auth != null && auth.headerName() != null).ifPresent(auth -> headers.add(auth.headerName()));
+        List<String> keys = new ArrayList<>(logging.alwaysMaskKeys());
+        if (pipelineLogging != null && pipelineLogging.maskKeys() != null) {
+            keys.addAll(pipelineLogging.maskKeys());
+        }
+        if (stepLogging != null && stepLogging.maskKeys() != null) {
+            keys.addAll(stepLogging.maskKeys());
+        }
+        return MaskingPolicy.of(headers, keys);
     }
 
     /** {@code fallback} over the context plus {@code error}; its result becomes {@code steps.<id>.body} (US-4.6). */
@@ -254,6 +343,8 @@ public class RunCoordinator {
             @Override
             public void afterCommit() {
                 log.info("run finished runId={} status={}", runId, logged);
+                metrics.runFinished(run.pipelineCode(), logged.name(), java.time.Duration.between(
+                        run.startedAt() != null ? run.startedAt() : run.createdAt(), Instant.now(clock)));
                 notifier.notifyDone(runId);
             }
         });

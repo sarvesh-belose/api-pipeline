@@ -136,6 +136,13 @@ public class RunRows {
                 .param("reason", reason).param("run", runId).param("step", stepId).update();
     }
 
+    /** A pending step that will never start because the run stopped (README §7: {@code CANCELLED}). */
+    public void cancelStep(UUID runId, String stepId) {
+        jdbc.sql("UPDATE step_execution SET status = 'CANCELLED', ended_at = SYSUTCDATETIME(), "
+                + "row_version = row_version + 1 WHERE run_id = :run AND step_id = :step AND status = 'PENDING'")
+                .param("run", runId).param("step", stepId).update();
+    }
+
     /** README §5.1 rule 7: stop intent is persisted with its cause. */
     public void stop(UUID runId, String reason, String errorCode, String errorMessage, String errorStepId) {
         jdbc.sql("""

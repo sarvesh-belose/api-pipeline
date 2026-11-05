@@ -36,7 +36,7 @@ public class RunService {
     private static final Logger log = LoggerFactory.getLogger(RunService.class);
 
     /** A started run and, for sync mode, the waiter's future. */
-    public record Started(UUID runId, CompletableFuture<Boolean> done) {
+    public record Started(UUID runId, int version, CompletableFuture<Boolean> done) {
     }
 
     private final PublishedPipelines pipelines;
@@ -96,7 +96,7 @@ public class RunService {
             log.error("run hand-off failed runId={}; released for recovery", runId, e);
             leases.release(lease, true);
         }
-        return new Started(runId, done);
+        return new Started(runId, version, done);
     }
 
     private int resolveVersion(String code, Integer requested, Authentication caller) {
