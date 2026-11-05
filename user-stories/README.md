@@ -505,7 +505,7 @@ systems.
   and `step_id` already do on `run_event`.
 - Nullable unique keys, such as `pipeline_run.idempotency_key`, are vendor migrations. SQL Server
   uses a filtered unique index (`WHERE … IS NOT NULL`), because it allows only one NULL in a
-  unique index; H2 uses a plain unique index (ADR-003 F16).
+  unique index; H2 in MSSQL mode also treats NULLs as equal, so it uses `CREATE UNIQUE NULLS DISTINCT INDEX` (ADR-003 F16, corrected).
 - Migrations live in `db/migration/common` (shared DDL) and `db/migration/{vendor}`
   (`sqlserver/`: partitioning, `ISJSON`, roles, grants, filtered indexes; `h2/`: plain
   equivalents plus the `SYSUTCDATETIME()` shim). Version numbers are global, and a vendor file

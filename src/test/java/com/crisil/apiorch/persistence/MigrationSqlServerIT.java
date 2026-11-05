@@ -2,21 +2,15 @@ package com.crisil.apiorch.persistence;
 
 import org.junit.jupiter.api.Tag;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.boot.testcontainers.context.ImportTestcontainers;
 import org.springframework.test.context.ActiveProfiles;
-import org.testcontainers.containers.MSSQLServerContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
+
+import testsupport.db.SharedSqlServer;
 
 /** Slow tier: the same migrations on SQL Server 2022 (`common/` + `sqlserver/`). */
 @Tag("slow")
 @SpringBootTest
 @ActiveProfiles("test")
-@Testcontainers
+@ImportTestcontainers(SharedSqlServer.class)
 class MigrationSqlServerIT extends MigrationContract {
-
-    @Container
-    @ServiceConnection
-    static MSSQLServerContainer<?> mssql = new MSSQLServerContainer<>("mcr.microsoft.com/mssql/server:2022-latest")
-            .acceptLicense();
 }
