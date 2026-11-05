@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.crisil.apiorch.definition.DefinitionDiff;
 import com.crisil.apiorch.pipeline.dto.DraftRequest;
 import com.crisil.apiorch.pipeline.dto.DraftResponse;
 import com.crisil.apiorch.pipeline.dto.PipelineSummary;
@@ -63,6 +64,23 @@ public class PipelineAdminController {
     @GetMapping("/{code}/versions/{version}")
     public VersionResponse version(@PathVariable String code, @PathVariable String version) {
         return publishing.get(code, version);
+    }
+
+    /** US-3.4: what changed from {@code against} to {@code version}. */
+    @GetMapping("/{code}/versions/{version}/diff")
+    public DefinitionDiff.Result diff(@PathVariable String code, @PathVariable int version,
+            @RequestParam("against") int against) {
+        return DefinitionDiff.diff(publishing.side(code, against), publishing.side(code, version));
+    }
+
+    /** US-3.4: republish version {@code to} as the next version. */
+    @PostMapping("/{code}/rollback")
+    public ResponseEntity<VersionResponse> rollback(@PathVariable String code, @RequestParam("to") int to,
+            @RequestBody(required = false) @Validated PublishRequest request, Principal principal) {
+        VersionResponse published = publishing.rollback(code, to, request == null ? null : request.comment(),
+                actor.of(principal));
+        return ResponseEntity.created(URI.create("/api/v1/admin/pipelines/" + code + "/versions/"
+                + published.version())).body(published);
     }
 
     /** US-3.2: validate the draft, or the definition in the body, without saving. */

@@ -25,6 +25,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 
 import com.crisil.apiorch.config.ApiorchProperties;
 import com.crisil.apiorch.definition.DefinitionBinder;
+import com.crisil.apiorch.definition.DefinitionDiff;
 import com.crisil.apiorch.definition.DefinitionValidator;
 import com.crisil.apiorch.definition.DslJsonMapper;
 import com.crisil.apiorch.definition.ValidationReport;
@@ -82,6 +83,42 @@ public class PublishService {
             throw new ApiProblemException(HttpStatus.FORBIDDEN, "forbidden",
                     "four-eyes: a different administrator must publish");
         }
+        VersionResponse published = store(code, draft, comment, actor, null, "The draft");
+        jdbc.sql("DELETE FROM pipeline_definition WHERE code = :c AND version = 0").param("c", code).update();
+        log.info("pipeline published code={} version={} checksum={} actor={} comment={} executionPlan={}", code,
+                published.version(), published.checksum(), actor, comment, published.executionPlan());
+        return published;
+    }
+
+    /**
+     * Republishes version {@code to} as the next version (US-3.4), after validating it against today's endpoints.
+     * History is never rewritten, the draft is left alone, and four-eyes does not apply: rollback is the emergency
+     * path, logged with the actor.
+     */
+    @Transactional
+    public VersionResponse rollback(String code, int to, String comment, String actor) {
+        lockPipeline(code);
+        VersionSummary source = to < 1 ? null : version(code, to).orElse(null);
+        if (source == null) {
+            throw notFound(code, String.valueOf(to));
+        }
+        int latest = versions(code).get(0).version();
+        if (latest == to) {
+            throw new ApiProblemException(HttpStatus.CONFLICT, "no-changes",
+                    "Version " + to + " of '" + code + "' is already the latest.").with("version", to);
+        }
+        Draft content = jdbc.sql("SELECT content, created_by, updated_by FROM pipeline_definition "
+                        + "WHERE code = :c AND version = :v").param("c", code).param("v", to)
+                .query((rs, i) -> new Draft(rs.getString("content"), actor, actor)).single();
+        VersionResponse published = store(code, content, comment, actor, source, "Version " + to);
+        log.info("pipeline rolled back code={} fromVersion={} newVersion={} actor={} comment={}", code, to,
+                published.version(), actor, comment);
+        return published;
+    }
+
+    /** Validates {@code draft}'s content and inserts it as the next version; the caller holds the row lock. */
+    private VersionResponse store(String code, Draft draft, String comment, String actor, VersionSummary source,
+            String what) {
         JsonNode document = read(draft.content());
         DefinitionBinder.Result bound = binder.bind(document, "");
         ValidationReport report = bound.ok()
@@ -89,33 +126,50 @@ public class PublishService {
                 : ValidationReport.invalid(bound.errors());
         if (!report.valid()) {
             throw new ApiProblemException(HttpStatus.UNPROCESSABLE_ENTITY, "definition-invalid",
-                    "The draft of '" + code + "' has validation errors; nothing was published.")
+                    what + " of '" + code + "' has validation errors; nothing was published.")
                     .with("errors", report.errors());
         }
         String checksum = Canonical.checksum(document);
         Optional<VersionSummary> latest = versions(code).stream().findFirst();
         if (latest.isPresent() && latest.get().checksum().equals(checksum)) {
             throw new ApiProblemException(HttpStatus.CONFLICT, "no-changes",
-                    "The draft equals version " + latest.get().version() + " of '" + code + "'.")
+                    what + " equals version " + latest.get().version() + " of '" + code + "'.")
                     .with("version", latest.get().version());
         }
         int version = latest.map(v -> v.version() + 1).orElse(1);
         jdbc.sql("""
-                INSERT INTO pipeline_definition (id, code, version, status, content, checksum, comment, created_by,
-                                                 updated_by, published_at, published_by)
-                VALUES (:id, :c, :v, 'PUBLISHED', :content, :sum, :comment, :createdBy, :updatedBy, SYSUTCDATETIME(),
-                        :actor)""")
+                INSERT INTO pipeline_definition (id, code, version, status, content, checksum, comment,
+                                                 source_version, source_checksum, created_by, updated_by,
+                                                 published_at, published_by)
+                VALUES (:id, :c, :v, 'PUBLISHED', :content, :sum, :comment, :sourceVersion, :sourceChecksum,
+                        :createdBy, :updatedBy, SYSUTCDATETIME(), :actor)""")
                 .param("id", UUID.randomUUID()).param("c", code).param("v", version)
                 .param("content", draft.content()).param("sum", checksum).param("comment", comment)
+                .param("sourceVersion", source == null ? null : source.version())
+                .param("sourceChecksum", source == null ? null : source.checksum())
                 .param("createdBy", draft.createdBy()).param("updatedBy", draft.updatedBy()).param("actor", actor)
                 .update();
-        jdbc.sql("DELETE FROM pipeline_definition WHERE code = :c AND version = 0").param("c", code).update();
         events.publishEvent(new PipelinePublishedEvent(code, version));
         VersionSummary stored = version(code, version).orElseThrow();
-        log.info("pipeline published code={} version={} checksum={} actor={} comment={} executionPlan={}", code,
-                version, checksum, actor, comment, report.executionPlan());
         return new VersionResponse(code, version, checksum, stored.publishedAt(), actor, comment,
                 report.executionPlan(), null);
+    }
+
+    /** The definition document and execution plan of a published version, for the diff (US-3.4). */
+    @Transactional(readOnly = true)
+    public DefinitionDiff.Side side(String code, int version) {
+        requirePipeline(code);
+        String content = jdbc.sql("SELECT content FROM pipeline_definition WHERE code = :c AND version = :v")
+                .param("c", code).param("v", version).query(String.class).optional()
+                .filter(c -> version > 0)
+                .orElseThrow(() -> notFound(code, String.valueOf(version)));
+        JsonNode document = read(content);
+        DefinitionBinder.Result bound = binder.bind(document, "");
+        if (!bound.ok()) {
+            throw new IllegalStateException("Published " + code + " v" + version + " no longer binds");
+        }
+        ValidationReport report = validator.validate(bound.definition(), EndpointStates.of(endpoints));
+        return new DefinitionDiff.Side(version, document, bound.definition(), report.executionPlan());
     }
 
     @Transactional(readOnly = true)
