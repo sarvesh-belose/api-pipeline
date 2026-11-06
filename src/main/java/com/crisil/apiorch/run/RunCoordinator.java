@@ -218,6 +218,9 @@ public class RunCoordinator {
             if (DEADLINE.equals(stopReason)) {
                 // US-5.1 AC3: a normal segment past its deadline (post-completion segments come with US-6.3)
                 status = RunStatus.TIMED_OUT;
+            } else if (RunOperatorService.CANCEL.equals(stopReason)) {
+                // US-5.7 AC1: in-flight steps kept their real outcome; the run ends CANCELLED
+                status = RunStatus.CANCELLED;
             }
             finish(run, pipeline, status, steps.size());
             return List.of();
@@ -539,6 +542,8 @@ public class RunCoordinator {
                 leases.lockFenced(lease);
                 RunRows.Run run = rows.run(lease.runId()).orElseThrow();
                 if (run.status().terminal()) {
+                    leases.release(lease, false);
+                    admission.released();
                     return null;
                 }
                 metrics.runRecovered();
@@ -648,6 +653,7 @@ public class RunCoordinator {
             case COMPLETED -> EventType.RUN_COMPLETED;
             case COMPLETED_WITH_ERRORS -> EventType.RUN_COMPLETED_WITH_ERRORS;
             case TIMED_OUT -> EventType.RUN_TIMED_OUT;
+            case CANCELLED -> EventType.RUN_CANCELLED;
             default -> EventType.RUN_FAILED;
         };
         Map<String, Object> details = new HashMap<>();
