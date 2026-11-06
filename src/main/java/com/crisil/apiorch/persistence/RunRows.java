@@ -183,6 +183,11 @@ public class RunRows {
                 .param("step", errorStepId).param("id", runId).update();
     }
 
+    /** A run-level error that does not stop the run (US-4.6 AC7); an earlier error is kept. */
+    public void recordError(UUID runId, String errorCode, String errorMessage) {
+        stop(runId, null, errorCode, errorMessage, null);
+    }
+
     /** Ends the run and gives up its lease. */
     public void finishRun(UUID runId, RunStatus status) {
         jdbc.sql("""

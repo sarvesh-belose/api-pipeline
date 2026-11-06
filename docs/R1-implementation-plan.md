@@ -236,14 +236,19 @@ afterwards. `HttpStepExecutor` replaces the placeholder executor.
 reordered version is asserted in `SequentialRunIT`. Cross-node convergence is shown by a version written straight to the table (no local event)
 being picked up within the TTL; the two-context version waits for `ClusterTestSupport` engine hooks (US-5.5).
 
-**Sprint 4 status (2026-11-05): in progress** on `sprint4/*` branches; both tiers green (`verify -Pslow`, 369 tests).
+**Sprint 4 status (2026-11-06): in progress** on `sprint4/*` branches; both tiers green (`verify -Pslow`, 395 tests).
 
 | Planned | Delivered | Still to do this sprint |
 |---|---|---|
-| Finish US-7.6 → US-7.7 | US-7.6 for `run_context`: every entry stored `v1:<kid>:…` with `key_id`, keys by `env:`/`file:` reference (`apiorch.context.*`), startup fails without keys outside `local` (`plain:` with a WARN there), rotation report at startup, tampered or moved entries fail the run with `CONTEXT_DECRYPTION_FAILED` | Outbox payload encryption with US-6.5 (R2); US-7.7 |
-| US-4.7 → US-4.6 | — | Both |
+| Finish US-7.6 → US-7.7 | US-7.6 for `run_context`: every entry stored `v1:<kid>:…` with `key_id`, keys by `env:`/`file:` reference (`apiorch.context.*`), startup fails without keys outside `local` (`plain:` with a WARN there), rotation report at startup, tampered or moved entries fail the run with `CONTEXT_DECRYPTION_FAILED`. US-7.7: `run_exchange` rows for the inbound request (creation transaction, true body size) and every response (decided under the run lock), exactly one `final = 1` row with the masked final resource; `GET /api/v1/runs/{runId}/exchanges/{kind}` (`apiorch.ops`) | Outbox payload encryption with US-6.5 (R2); exchanges in the timeline `calls[]` with US-7.4; AC4 (`COMPLETED_PENDING_ASYNC`) with US-6.3 (R2) |
+| US-4.7 → US-4.6 | US-4.7: `Idempotency-Key` per (pipeline, caller) with the canonical input hash; replays return the existing run (sync waits like the original, `Idempotent-Replayed: true`), different input is `422 idempotency-key-reuse`, a lost insert race replays; 20-request race on H2 and SQL Server. US-4.6: `FailurePolicyApplier` (pure); `FAIL_RUN` persists `stop_reason` with `error_code = STEP_FAILED` and `advance` honours it on every call; `CONTINUE` skips dependents `DEPENDENCY_FAILED`; `FALLBACK` flagged in `errors[]`, a failing fallback is `EXPRESSION_ERROR` and stops; cancelled steps in `errors[]`; output over partial data, `OUTPUT_EXPRESSION_ERROR` gives `COMPLETED_WITH_ERRORS` | US-4.7 AC7 with US-5.4 (admission) and US-3.7 (disabled); two-context race and `FailRunCrashIT` (US-4.6 AC2) with `ClusterTestSupport` (US-5.5); in-flight parallel branch in `FailRunIT` with US-4.4; `CONDITION_FALSE` skips count as success with US-4.5 (R3) |
 | Finish US-4.3 → US-4.4 → start US-5.5 | — | All three |
 | US-5.1 → start US-5.2 | — | Both |
+
+**Note (US-7.7):** a sync request still waiting on this node writes the final row itself; otherwise the finalizer
+writes it. A crash between the finalizing commit and the waiting request's response leaves no final row until recovery
+(US-5.5) backfills it, which is still to do. The response row is written just before the response is sent, and a failed write is logged
+without failing the response.
 
 **Note (US-7.6):** context keys are operator-configured, so they are resolved directly from `env:` or `file:` and the
 endpoint reference policy (US-2.2) does not apply to them. The test profile uses a fixed test-only key under

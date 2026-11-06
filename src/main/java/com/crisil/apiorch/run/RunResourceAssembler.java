@@ -59,11 +59,16 @@ public class RunResourceAssembler {
             steps.add(new RunResource.Step(s.stepId(), s.status().name(), s.attempts(), s.httpStatus(), s.durationMs(),
                     s.fallbackApplied(), s.skipReason()));
             if (s.status() == StepStatus.FAILED || s.fallbackApplied()) {
-                errors.add(new RunResource.Error(s.stepId(), s.errorCode(), s.errorMessage(), s.httpStatus()));
+                errors.add(new RunResource.Error(s.stepId(), s.errorCode(), s.errorMessage(), s.httpStatus(),
+                        s.fallbackApplied() ? Boolean.TRUE : null));
+            } else if (s.status() == StepStatus.CANCELLED) {
+                errors.add(new RunResource.Error(s.stepId(), "CANCELLED", null, null, null));
             }
         }
-        if (run.errorCode() != null && errors.stream().noneMatch(e -> run.errorCode().equals(e.code()))) {
-            errors.add(new RunResource.Error(run.errorStepId(), run.errorCode(), run.errorMessage(), null));
+        // STEP_FAILED is already described by the failed step's own entry (US-4.6 AC1)
+        if (run.errorCode() != null && !run.errorCode().equals(RunCoordinator.STEP_FAILED)
+                && errors.stream().noneMatch(e -> run.errorCode().equals(e.code()))) {
+            errors.add(new RunResource.Error(run.errorStepId(), run.errorCode(), run.errorMessage(), null, null));
         }
         JsonNode output = null;
         if (run.status().doneForCaller()) {

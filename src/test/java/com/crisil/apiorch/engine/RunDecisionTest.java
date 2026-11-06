@@ -78,7 +78,7 @@ class RunDecisionTest {
         RunDecision.Next next = RunDecision.decide(p, states(p, Map.of("api1", done("api1"),
                 "api2", StepState.failed("api2", false))));
         assertThat(next.skip()).extracting(RunDecision.Skip::stepId).containsExactly("api3", "api4", "api5");
-        assertThat(next.skip()).extracting(RunDecision.Skip::reason).containsOnly("DEPENDENCY_NOT_SUCCEEDED");
+        assertThat(next.skip()).extracting(RunDecision.Skip::reason).containsOnly("DEPENDENCY_FAILED");
         assertThat(next.finalStatus()).isEqualTo(RunStatus.COMPLETED_WITH_ERRORS);
     }
 

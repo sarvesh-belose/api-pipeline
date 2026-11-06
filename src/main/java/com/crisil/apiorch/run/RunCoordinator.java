@@ -25,6 +25,7 @@ import com.crisil.apiorch.config.ExecutorConfig;
 import com.crisil.apiorch.definition.CompiledPipeline;
 import com.crisil.apiorch.definition.CompiledStep;
 import com.crisil.apiorch.definition.StepDefinition.OnFailure;
+import com.crisil.apiorch.engine.FailurePolicyApplier;
 import com.crisil.apiorch.engine.Lease;
 import com.crisil.apiorch.engine.LeaseLostException;
 import com.crisil.apiorch.engine.RunContext;
@@ -61,6 +62,9 @@ import com.crisil.apiorch.step.StepOutcome;
 public class RunCoordinator {
 
     private static final Logger log = LoggerFactory.getLogger(RunCoordinator.class);
+
+    static final String STEP_FAILED = "STEP_FAILED";
+    static final String OUTPUT_EXPRESSION_ERROR = "OUTPUT_EXPRESSION_ERROR";
 
     private final TransactionTemplate tx;
     private final RunRows rows;
@@ -147,7 +151,7 @@ public class RunCoordinator {
                     && pipeline.step(step.stepId()).definition().effectiveOnFailure() == OnFailure.FAIL_RUN;
             states.put(step.stepId(), new StepState(step.stepId(), step.status(), step.execNo(), stops));
         }
-        RunDecision.Next next = RunDecision.decide(pipeline, states);
+        RunDecision.Next next = RunDecision.decide(pipeline, states, run.stopReason() != null);
         for (RunDecision.Skip skip : next.skip()) {
             if (skip.reason().equals("RUN_STOPPED")) {
                 rows.cancelStep(run.id(), skip.stepId());
@@ -239,18 +243,28 @@ public class RunCoordinator {
         OnFailure policy = step.definition().effectiveOnFailure();
         long seq = recorder.record(runId, EventType.STEP_FAILED, ref, details("code", outcome.errorCode(),
                 "message", outcome.errorMessage(), "httpStatus", outcome.httpStatus(), "policy", policy.name()), null);
-        if (policy == OnFailure.FALLBACK && step.fallback() != null && applyFallback(invocation, outcome)) {
+        FailurePolicyApplier.PolicyOutcome applied = FailurePolicyApplier.apply(step, invocation.context(),
+                new FailurePolicyApplier.Failure(outcome.errorCode(), outcome.errorMessage(), outcome.httpStatus()),
+                evaluator);
+        if (applied instanceof FailurePolicyApplier.FallbackApplied fallback) {
+            rows.putContext(runId, step.id(), RunContext.stepResult(null, null, fallback.body()));
             recorder.record(runId, EventType.STEP_FALLBACK_APPLIED, ref, Map.of("errorCode",
                     String.valueOf(outcome.errorCode())), null);
             rows.finishStep(runId, step.id(), StepStatus.SUCCEEDED, outcome.attempts(), outcome.httpStatus(),
                     outcome.durationMs(), outcome.errorCode(), outcome.errorMessage(), true, seq);
+            log.info("fallback applied errorCode={}", outcome.errorCode());
+            return;
+        }
+        log.warn("step failed policy={} code={} httpStatus={}", policy, outcome.errorCode(), outcome.httpStatus());
+        if (applied instanceof FailurePolicyApplier.StopRun stop) {
+            rows.finishStep(runId, step.id(), StepStatus.FAILED, outcome.attempts(), outcome.httpStatus(),
+                    outcome.durationMs(), stop.code(), stop.message(), false, seq);
+            // README §5.1 rule 7: the stop intent commits with the failure, so no node starts another step
+            rows.stop(runId, "FAIL_RUN", STEP_FAILED, stop.message(), step.id());
             return;
         }
         rows.finishStep(runId, step.id(), StepStatus.FAILED, outcome.attempts(), outcome.httpStatus(),
                 outcome.durationMs(), outcome.errorCode(), outcome.errorMessage(), false, seq);
-        if (policy != OnFailure.CONTINUE) {
-            rows.stop(runId, "FAIL_RUN", outcome.errorCode(), outcome.errorMessage(), step.id());
-        }
     }
 
     /**
@@ -278,33 +292,20 @@ public class RunCoordinator {
         }
     }
 
-    /** {@code fallback} over the context plus {@code error}; its result becomes {@code steps.<id>.body} (US-4.6). */
-    private boolean applyFallback(StepInvocation invocation, StepOutcome outcome) {
-        ObjectNode ctx = invocation.context().deepCopy();
-        ObjectNode error = ctx.putObject("error");
-        error.put("code", outcome.errorCode()).put("message", outcome.errorMessage());
-        if (outcome.httpStatus() != null) {
-            error.put("httpStatus", outcome.httpStatus());
-        }
-        try {
-            JsonNode body = evaluator.evaluate(invocation.step().fallback(), ctx);
-            rows.putContext(invocation.runId(), invocation.step().id(), RunContext.stepResult(null, null, body));
-            return true;
-        } catch (ExpressionException e) {
-            log.warn("fallback expression failed code={}", e.code());
-            return false;
-        }
-    }
-
     private void finish(RunRows.Run run, CompiledPipeline pipeline, RunStatus status, int stepCount) {
         ObjectNode context = context(run);
         RunStatus finalStatus = status;
         try {
+            // AC6: evaluated over whatever data exists, also when the run failed
             JsonNode output = RunContext.output(pipeline, context, evaluator);
             rows.putContext(run.id(), "output", output.isMissingNode() ? context.objectNode() : output);
         } catch (ExpressionException e) {
-            rows.stop(run.id(), "FAIL_RUN", "OUTPUT_ERROR", e.getMessage(), null);
-            finalStatus = RunStatus.FAILED;
+            // AC7: no output; a completed run becomes COMPLETED_WITH_ERRORS, a failed one stays FAILED
+            log.warn("output expression failed code={}", e.code());
+            rows.recordError(run.id(), OUTPUT_EXPRESSION_ERROR, e.getMessage());
+            if (finalStatus == RunStatus.COMPLETED) {
+                finalStatus = RunStatus.COMPLETED_WITH_ERRORS;
+            }
         }
         EventType event = switch (finalStatus) {
             case COMPLETED -> EventType.RUN_COMPLETED;
@@ -313,6 +314,9 @@ public class RunCoordinator {
         };
         Map<String, Object> details = new HashMap<>();
         details.put("steps", stepCount);
+        if (run.startedAt() != null) {
+            details.put("durationMs", java.time.Duration.between(run.startedAt(), Instant.now(clock)).toMillis());
+        }
         recorder.record(run.id(), event, null, details, null);
         rows.finishRun(run.id(), finalStatus);
         exchanges.finalResult(run.id());

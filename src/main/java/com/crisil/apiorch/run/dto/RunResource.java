@@ -31,7 +31,8 @@ public record RunResource(
         Map<String, String> links) {
 
     @JsonInclude(JsonInclude.Include.NON_NULL)
-    public record Error(String stepId, String code, String message, Integer httpStatus) {
+    /** {@code fallbackApplied} is {@code true} for a fallback value, otherwise left out (US-4.6). */
+    public record Error(String stepId, String code, String message, Integer httpStatus, Boolean fallbackApplied) {
     }
 
     @JsonInclude(JsonInclude.Include.NON_NULL)
