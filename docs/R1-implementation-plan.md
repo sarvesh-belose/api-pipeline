@@ -308,6 +308,28 @@ controller before closing the context, instead of a fixed 400 ms sleep that a lo
 `RetryNoThreadBlockingIT` gives its endpoint a wide circuit window, because 20 failing runs would otherwise open the
 circuit (US-5.3) and stop the retries it counts.
 
+**Sprint 6 status (2026-11-06): in progress** on `sprint6/*` branches; both tiers green (`verify -Pslow`, 485 tests; perf smoke separately).
+
+| Planned | Delivered | Left for later sprints |
+|---|---|---|
+| US-5.4; US-7.5 circuit-breaker meters; security review | US-5.4: a semaphore bulkhead per endpoint and node (`maxWaitMs` 0), innermost after the circuit breaker; a full bulkhead or a refused `step-io` task is a `BULKHEAD_FULL` attempt (`BULKHEAD_REJECTED`) that sends nothing and is retried; `AdmissionControl` counts the runs this node holds a lease on (created, claimed, released, reconciled at every renewal) and refuses new runs past `apiorch.admission.max-in-flight-runs` with `429 admission-rejected` and `Retry-After: 1`, never replays or recovered runs; `apiorch.runs.inflight`, `apiorch.admission.rejected`, `resilience4j_bulkhead_*`. Circuit-breaker meters were delivered in Sprint 5. Security review pack: [`R1-security-review.md`](R1-security-review.md) | US-5.4 AC4 (waiting runs not driven are not counted) is true by construction and gets its test with US-6.3 (R2); the security review itself, at the S6 review |
+| US-8.1 slice A; R1 end-to-end exit suite | US-8.1 slice A: WireMock in Compose with the demo stubs, `LocalSeedRunner` (endpoints upserted, `DEMO_ONBOARD` v1 published once), the v2 reorder and the broken reorder as seed files, `demo/README.md`, `requests.http`, `walkthrough.ps1`; `DemoWalkthroughIT` runs the walkthrough in the build. The exit table (§9) now names the tests that exist and their status | Slice B (async demo) with US-6.3 (R2); the live demo at the S6 review |
+| US-5.7; slow-tier stabilization | US-5.7: `POST …/cancel` (reason required, `409 illegal-run-state` when terminal, `compensate` refused until US-5.6) stops the run through `stop_reason = CANCEL` and a wake-up; in-flight steps keep their real outcome and the run ends `CANCELLED`; `POST …/steps/{stepId}/resolve` records the operator's verdict on an `UNKNOWN` step without advancing the run. Finishing a run clears `wakeup_requested`. The slow tier ran green in every full build this sprint | Resume (US-5.8, R2); cancel of waiting runs and the late callback (AC3) with E6 |
+| Regression, defects, perf smoke, docs | Perf smoke `PerfSmokeIT` (tag `perf`, `./mvnw verify -Pperf`, `-Dperf.rate`, `-Dperf.seconds`): a 60 s run at 20 runs/s completed 1 200 of 1 200 with no refusals (start p95 24 ms, slowest run 4.6 s); the full 10-minute run at 20 runs/s completed 12 000 of 12 000 with no refusals (start p95 16 ms, slowest run 6.1 s) | US-8.2 (R2) is the NFR proof |
+
+**Note (US-8.1, found running the demo live):** the walkthrough was also run by hand against WireMock standalone
+(the same `demo/wiremock` mappings) and the `local` profile: ready in 28–35 s, seeded once, and every step behaved
+as described. It exposed a real defect: in dev security mode a sync run was executed but its caller got `401`. The
+response is written on an async dispatch (US-4.1), which `OncePerRequestFilter` skips by default, so the dev filter
+never set `dev-user` there; JWT mode was unaffected, which is why the build (all JWT) missed it.
+`DevUserFilter` now runs on async dispatches too, and `LocalDevModeIT` covers a sync run.
+
+**Note (perf smoke):** the first 60 s run lost 50 of 1 200 runs to `BULKHEAD_FULL`: all three steps call one
+endpoint, so 20 runs/s is 60 calls/s against the default bulkhead of 25, and on a loaded machine calls overlapped
+past 25 until the default 3 attempts ran out. That is the bulkhead doing its job; the smoke now gives its one
+endpoint a bulkhead of 100. Sizing `maxConcurrentCalls` per endpoint against its expected call rate belongs in
+the operations guide (US-8.4).
+
 ## 7. Cross-cutting enablers (in Sprint 1, so the four tracks don't block each other)
 
 1. **Schema-ahead.** Write `V2__endpoint` through `V7__run_exchange` in Sprint 1, straight from
@@ -343,22 +365,26 @@ circuit (US-5.3) and stop the retries it counts.
 
 ## 9. R1 exit verification
 
-| Exit criterion (README §3) | Evidence |
-|---|---|
-| Sync and caller-async runs | `SyncRunIT`, `SyncRunThreadUsageIT` (US-4.1); `AsyncRunIT` (US-4.2) |
-| Sequence and DAG with mapping | `SequentialRunIT`, `PartialFieldMappingIT`, `EventSequenceIT` (US-4.3); `ParallelStepsIT`, `AdvanceRaceIT` (US-4.4) |
-| Retries, timeouts, circuit breakers, backpressure | `RetryIT`, `RetryBudgetIT` (US-5.2); `RunDeadlineIT` (US-5.1); `CircuitBreakerIT` (US-5.3); `BulkheadIT`, `AdmissionNoDriftIT` (US-5.4) |
-| Crash recovery, cancel and resolve | `CrashRecoveryIT`, `FencingIT`, `GracefulShutdownIT` (US-5.5); `CancelIT`, `ResolveUnknownIT` (US-5.7) |
-| Full activity log incl. caller exchange | US-7.1–7.4 and US-7.7 ITs; a timeline of the demo run shows inbound request, attempts and caller response |
-| Metrics | `MetricsIT`, `MetricCardinalityTest` (US-7.5) |
-| Encrypted working data | `EncryptedContextIT` reads the raw column (US-7.6) |
-| No-redeploy reorder and rollback | `ReorderNoRedeployIT`, `InFlightPinningIT` (US-3.3); `RollbackIT` (US-3.4) |
-| Reachable on a stable public address | `ForwardedHeadersIT`, `PublicBaseUrlGuardTest`, `ManagementPortIsolationIT` (US-1.4), plus the manual checklist against the R1 environment's load balancer |
-| Runnable reorder demo | US-8.1 slice A walkthrough, run live at the S6 review |
+The evidence column names the tests that exist on `main` (updated in Sprint 6; the first version named some
+planned classes whose cases ended up in others).
+
+| Exit criterion (README §3) | Evidence | Status |
+|---|---|---|
+| Sync and caller-async runs | `SyncRunIT`, `SyncRunThreadUsageIT` (US-4.1); `AsyncRunIT` (US-4.2) | green |
+| Sequence and DAG with mapping | `SequentialRunIT` (order, whole- and part-field mapping, gap-free event sequence), `ExpressionGuardsIT` (US-4.3); `ParallelStepsIT`, `ParallelLimitIT`, `AdvanceRaceIT`/`AdvanceRaceSqlServerIT` (US-4.4) | green |
+| Retries, timeouts, circuit breakers, backpressure | `RetryIT`, `RetryBudgetIT`, `RetryNoThreadBlockingIT` (US-5.2); `StepTimeoutIT`, `RunDeadlineIT` (US-5.1); `CircuitBreakerIT` (US-5.3); `BulkheadIT`, `AdmissionControlIT`, `ExecutorSaturationIT` (US-5.4) | green |
+| Crash recovery, cancel and resolve | `RecoveryIT`, `CrashRecoveryIT`/`CrashRecoverySqlServerIT` (claim, fencing, concurrent sweep, replay after recovery), `GracefulShutdownIT` (US-5.5); `CancelIT`, `ResolveUnknownIT` (US-5.7) | green |
+| Full activity log incl. caller exchange | `ActivityRecorderContract`, `AttemptCaptureIT`, `MaskingEndToEndIT`, `InboundExchangeIT`, `CallerResponseIT`, `ExchangeApiIT`, `TimelineIT`, `TimelineQueryCountIT`, `TimelinePartitionEliminationIT`, `RunSearchIT` (US-7.1–7.4, US-7.7); the demo run's timeline in `DemoWalkthroughIT` | green |
+| Metrics | `MetricsIT`, `ResilienceMetricsIT`, `MetricCardinalityTest` (US-7.5) | green |
+| Encrypted working data | `EncryptedContextIT` reads the raw column (US-7.6) | green |
+| No-redeploy reorder and rollback | `ReorderNoRedeployIT`, `InFlightPinningIT` (US-3.3); `RollbackIT` (US-3.4); `DemoWalkthroughIT` | green |
+| Reachable on a stable public address | `ForwardedHeadersIT`, `PublicBaseUrlGuardTest`, `ApplicationSmokeIT` (management port) (US-1.4), plus the manual checklist against the R1 environment's load balancer | automated part green; the load-balancer checklist needs the R1 environment |
+| Runnable reorder demo | US-8.1 slice A: `demo/README.md`, `demo/walkthrough.ps1`, and `DemoWalkthroughIT` over the same WireMock mappings | green in the build; to be run live at the S6 review |
+| R1 security review | [`R1-security-review.md`](R1-security-review.md) | pack ready; review not yet held |
 
 **Also in Sprint 6, but not exit gates:**
-- **Perf smoke:** 20 runs/s for 10 minutes on one node, to catch gross regressions. The full
-  NFR proof is US-8.2 in R2.
+- **Perf smoke:** 20 runs/s for 10 minutes on one node, to catch gross regressions: `PerfSmokeIT`,
+  `./mvnw verify -Pperf`. The full NFR proof is US-8.2 in R2.
 - **Partition check:** the current and next months' partitions exist in the R1 environment (see
   risk R6).
 

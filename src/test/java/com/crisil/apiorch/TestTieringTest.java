@@ -17,12 +17,13 @@ import com.tngtech.archunit.lang.ConditionEvents;
 import com.tngtech.archunit.lang.SimpleConditionEvent;
 
 /**
- * US-1.1 AC10: every {@code *IT} carries no tag or {@code slow}, so a new tier cannot appear unnoticed and a slow
- * test cannot join the everyday build under another name.
+ * US-1.1 AC10: every {@code *IT} carries no tag, {@code slow}, or {@code perf} (the R1 perf smoke, run only with
+ * {@code -Pperf}), so a new tier cannot appear unnoticed and a slow test cannot join the everyday build under
+ * another name.
  */
 class TestTieringTest {
 
-    private static final Set<String> ALLOWED_TAGS = Set.of("slow");
+    private static final Set<String> ALLOWED_TAGS = Set.of("slow", "perf");
 
     private static final ArchCondition<JavaClass> HAVE_ONLY_ALLOWED_TAGS =
             new ArchCondition<>("carry no tag other than " + ALLOWED_TAGS) {
