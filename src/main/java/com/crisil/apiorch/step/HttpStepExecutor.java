@@ -47,6 +47,9 @@ public class HttpStepExecutor implements StepExecutor {
 
     private static final Logger log = LoggerFactory.getLogger(HttpStepExecutor.class);
     static final int MAX_ERROR_MESSAGE = 1000;
+    /** An attempt with this little budget left is not started (US-5.1). */
+    static final long MIN_BUDGET_MS = 100;
+    public static final String DEADLINE_EXCEEDED = "DEADLINE_EXCEEDED";
 
     private final EndpointClientRegistry endpoints;
     private final ExpressionEvaluator evaluator;
@@ -87,13 +90,31 @@ public class HttpStepExecutor implements StepExecutor {
             return StepOutcome.failed(null, "EXPRESSION_ERROR", limit(e.getMessage()), 0, 0);
         }
 
+        // US-5.1: the attempt timeout is the step's, capped by what is left of the segment
+        long stepTimeout = invocation.timeoutMs() != null ? invocation.timeoutMs()
+                : runtime.get().config().readTimeoutMs();
+        long attemptTimeout = stepTimeout;
+        boolean cappedByBudget = false;
+        if (invocation.deadline() != null) {
+            long budget = java.time.Duration.between(Instant.now(clock), invocation.deadline()).toMillis();
+            if (budget <= MIN_BUDGET_MS) {
+                return StepOutcome.failed(null, DEADLINE_EXCEEDED, "Run deadline reached before the request was sent",
+                        0, 0);
+            }
+            if (budget < stepTimeout) {
+                attemptTimeout = budget;
+                cappedByBudget = true;
+            }
+        }
+
         int attemptNo = 1;
         long seq = attempts.requestSent(invocation, attemptNo, request.method());
         Instant startedAt = Instant.now(clock);
         log.info("step started method={} url={}", request.method(), masked(request.uri()));
-        Call call = send(runtime.get().restClient(), request);
+        Call call = send(runtime.get().restClient(attemptTimeout), request);
         ExchangeRecorder.Exchange exchange = call.exchange();
-        long durationMs = exchange != null ? exchange.durationMs() : call.elapsedMs();
+        // a failed exchange never completed, so its own duration is not the attempt's (US-5.1 AC1)
+        long durationMs = exchange != null && call.failure() == null ? exchange.durationMs() : call.elapsedMs();
 
         String outcome;
         String errorMessage = null;
@@ -102,6 +123,12 @@ public class HttpStepExecutor implements StepExecutor {
         if (call.failure() != null) {
             Throwable cause = rootIo(call.failure());
             outcome = classify(cause);
+            if (outcome.equals("TIMEOUT")) {
+                if (cappedByBudget) {
+                    outcome = DEADLINE_EXCEEDED;
+                }
+                log.warn("attempt timed out timeoutMs={} cappedByBudget={}", attemptTimeout, cappedByBudget);
+            }
             errorClass = cause.getClass().getSimpleName();
             errorMessage = limit(cause instanceof AuthFailureException auth
                     ? auth.code() + ": " + auth.getMessage() : String.valueOf(cause.getMessage()));

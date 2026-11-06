@@ -61,6 +61,8 @@ public class RunResourceAssembler {
             if (s.status() == StepStatus.FAILED || s.fallbackApplied()) {
                 errors.add(new RunResource.Error(s.stepId(), s.errorCode(), s.errorMessage(), s.httpStatus(),
                         s.fallbackApplied() ? Boolean.TRUE : null));
+            } else if (s.status() == StepStatus.UNKNOWN) {
+                errors.add(new RunResource.Error(s.stepId(), "STEP_OUTCOME_UNKNOWN", s.errorMessage(), null, null));
             } else if (s.status() == StepStatus.CANCELLED) {
                 errors.add(new RunResource.Error(s.stepId(), "CANCELLED", null, null, null));
             }

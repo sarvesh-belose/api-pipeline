@@ -37,10 +37,15 @@ public class SqlDialect {
     public Db db() {
         Db detected = db;
         if (detected == null) {
-            try (Connection c = dataSource.getConnection()) {
+            // the transaction's own connection when there is one: a second one per caller can exhaust the pool when
+            // many first transactions detect at once
+            Connection c = org.springframework.jdbc.datasource.DataSourceUtils.getConnection(dataSource);
+            try {
                 detected = fromProductName(c.getMetaData().getDatabaseProductName());
             } catch (SQLException e) {
                 throw new DataAccessResourceFailureException("Cannot detect the database", e);
+            } finally {
+                org.springframework.jdbc.datasource.DataSourceUtils.releaseConnection(c, dataSource);
             }
             db = detected;
         }

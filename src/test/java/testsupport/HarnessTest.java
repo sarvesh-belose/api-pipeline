@@ -46,7 +46,7 @@ class HarnessTest {
                 .hold("api3");
         Lease lease = new Lease(UUID.randomUUID(), "node-a", 1);
         java.util.function.Function<String, StepInvocation> inv = id -> new StepInvocation(lease, "DEMO_ONBOARD", 1,
-                "c-1", p.step(id), 1, null, Instant.EPOCH);
+                "c-1", p.step(id), 1, null, Instant.EPOCH, null);
 
         assertThat(stub.execute(inv.apply("api1")).body().path("stepId").asText()).isEqualTo("api1");
         assertThat(stub.execute(inv.apply("api2")).errorCode()).isEqualTo("HTTP_ERROR");

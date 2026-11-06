@@ -46,6 +46,7 @@ import com.crisil.apiorch.observability.EventType;
 import com.crisil.apiorch.observability.MdcSupport;
 import com.crisil.apiorch.persistence.ContextCipher;
 import com.crisil.apiorch.persistence.RunRows;
+import com.crisil.apiorch.step.HttpStepExecutor;
 import com.crisil.apiorch.step.StepAttempt;
 import com.crisil.apiorch.step.StepExecutor;
 import com.crisil.apiorch.step.StepInvocation;
@@ -64,6 +65,9 @@ public class RunCoordinator {
     private static final Logger log = LoggerFactory.getLogger(RunCoordinator.class);
 
     static final String STEP_FAILED = "STEP_FAILED";
+    static final String DEADLINE = "DEADLINE";
+    static final int LOCK_RETRIES = 5;
+    static final String RUN_TIMEOUT = "RUN_TIMEOUT";
     static final String OUTPUT_EXPRESSION_ERROR = "OUTPUT_EXPRESSION_ERROR";
 
     private final TransactionTemplate tx;
@@ -79,6 +83,7 @@ public class RunCoordinator {
     private final CapturePolicies captures;
     private final ApiorchMetrics metrics;
     private final CallerExchangeLog exchanges;
+    private final DeadlineTimers deadlines;
     private final Clock clock;
     private final long defaultRunTimeoutMs;
     private final int maxParallelSteps;
@@ -87,7 +92,8 @@ public class RunCoordinator {
             PublishedPipelines pipelines, StepExecutor executor,
             @Qualifier(ExecutorConfig.STEP_IO) ThreadPoolTaskExecutor stepIo, RunCompletionNotifier notifier,
             ExpressionEvaluator evaluator, AttemptWriter attempts, CapturePolicies captures,
-            ApiorchMetrics metrics, CallerExchangeLog exchanges, Clock clock, ApiorchProperties properties) {
+            ApiorchMetrics metrics, CallerExchangeLog exchanges, DeadlineTimers deadlines, Clock clock,
+            ApiorchProperties properties) {
         this.tx = tx;
         this.rows = rows;
         this.leases = leases;
@@ -101,6 +107,7 @@ public class RunCoordinator {
         this.captures = captures;
         this.metrics = metrics;
         this.exchanges = exchanges;
+        this.deadlines = deadlines;
         this.clock = clock;
         this.defaultRunTimeoutMs = properties.run().defaultRunTimeoutMs();
         this.maxParallelSteps = properties.run().maxParallelSteps();
@@ -108,7 +115,7 @@ public class RunCoordinator {
 
     /** {@code ACCEPTED → RUNNING} with {@code RUN_STARTED}, then the first {@link #advance}. */
     public void start(Lease lease) {
-        tx.executeWithoutResult(s -> {
+        inTx(s -> {
             leases.lockFenced(lease);
             RunRows.Run run = rows.run(lease.runId()).orElseThrow();
             CompiledPipeline pipeline = pipelines.compiled(run.pipelineCode(), run.pipelineVersion());
@@ -116,6 +123,13 @@ public class RunCoordinator {
                     : defaultRunTimeoutMs;
             rows.markRunning(lease.runId(), timeout);
             recorder.record(lease.runId(), EventType.RUN_STARTED, null, Map.of("runTimeoutMs", timeout), null);
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    deadlines.schedule(lease.runId(), timeout, () -> deadlineReached(lease));
+                }
+            });
+            return null;
         });
         advance(lease);
     }
@@ -124,7 +138,7 @@ public class RunCoordinator {
     public void advance(Lease lease) {
         List<StepInvocation> scheduled;
         try {
-            scheduled = tx.execute(s -> schedule(lease));
+            scheduled = inTx(s -> schedule(lease));
         } catch (ContextCipher.DecryptionException e) {
             log.error("run context failed to decrypt runId={}; failing the run", lease.runId(), e);
             failUnreadable(lease, e);
@@ -132,6 +146,9 @@ public class RunCoordinator {
         } catch (LeaseLostException e) {
             log.warn("lease lost runId={} epoch={}", lease.runId(), lease.epoch());
             metrics.leaseLost();
+            return;
+        } catch (RuntimeException e) {
+            releaseForRecovery(lease, "advance", e);
             return;
         }
         for (StepInvocation invocation : scheduled) {
@@ -153,7 +170,14 @@ public class RunCoordinator {
                     && pipeline.step(step.stepId()).definition().effectiveOnFailure() == OnFailure.FAIL_RUN;
             states.put(step.stepId(), new StepState(step.stepId(), step.status(), step.execNo(), stops));
         }
-        RunDecision.Next next = RunDecision.decide(pipeline, states, run.stopReason() != null);
+        String stopReason = run.stopReason();
+        long remaining = rows.remainingMs(run.id()).orElse(Long.MAX_VALUE);
+        if (stopReason == null && remaining <= 0) {
+            // the timer may be lost (another node, a restart): advance enforces the deadline itself
+            rows.stop(run.id(), DEADLINE, RUN_TIMEOUT, "Run deadline reached", null);
+            stopReason = DEADLINE;
+        }
+        RunDecision.Next next = RunDecision.decide(pipeline, states, stopReason != null);
         for (RunDecision.Skip skip : next.skip()) {
             if (skip.reason().equals("RUN_STOPPED")) {
                 rows.cancelStep(run.id(), skip.stepId());
@@ -171,6 +195,10 @@ public class RunCoordinator {
             boolean degraded = steps.stream().anyMatch(RunRows.Step::fallbackApplied);
             RunStatus status = next.finalStatus() == RunStatus.COMPLETED && degraded
                     ? RunStatus.COMPLETED_WITH_ERRORS : next.finalStatus();
+            if (DEADLINE.equals(stopReason)) {
+                // US-5.1 AC3: a normal segment past its deadline (post-completion segments come with US-6.3)
+                status = RunStatus.TIMED_OUT;
+            }
             finish(run, pipeline, status, steps.size());
             return List.of();
         }
@@ -184,14 +212,17 @@ public class RunCoordinator {
             return List.of();
         }
         ObjectNode context = context(run);
+        Instant deadline = remaining == Long.MAX_VALUE ? null : Instant.now(clock).plusMillis(remaining);
         List<StepInvocation> out = new ArrayList<>();
         for (CompiledStep step : ready) {
             rows.markStepRunning(run.id(), step.id());
             recorder.record(run.id(), EventType.STEP_SCHEDULED, StepRef.of(step.id(), 1), Map.of("stepId", step.id(),
                     "execNo", 1, "endpoint", step.definition().endpoint(), "mode", step.definition().effectiveMode().name()),
                     null);
+            Integer stepTimeout = step.definition().timeoutMs() != null ? step.definition().timeoutMs()
+                    : pipeline.definition().defaults() != null ? pipeline.definition().defaults().timeoutMs() : null;
             out.add(new StepInvocation(lease, run.pipelineCode(), run.pipelineVersion(), run.correlationId(), step, 1,
-                    snapshot(context, pipeline, step), null));
+                    snapshot(context, pipeline, step), deadline, stepTimeout));
         }
         return out;
     }
@@ -220,11 +251,18 @@ public class RunCoordinator {
     void complete(StepInvocation invocation, StepOutcome outcome) {
         Lease lease = invocation.lease();
         try {
-            tx.executeWithoutResult(s -> record(invocation, outcome));
+            inTx(s -> {
+                record(invocation, outcome);
+                return null;
+            });
         } catch (LeaseLostException e) {
             log.warn("lease lost runId={} epoch={}; discarding the result of {}", lease.runId(), lease.epoch(),
                     invocation.step().id());
             metrics.leaseLost();
+            return;
+        } catch (RuntimeException e) {
+            // the step stays RUNNING; recovery (US-5.5) decides from its idempotency whether to send it again
+            releaseForRecovery(lease, "recording " + invocation.step().id(), e);
             return;
         }
         metrics.stepFinished(invocation.pipeline(), invocation.step().id(), invocation.step().definition().endpoint(),
@@ -250,6 +288,10 @@ public class RunCoordinator {
                     "durationMs", outcome.durationMs(), "httpStatus", outcome.httpStatus()), null);
             rows.finishStep(runId, step.id(), StepStatus.SUCCEEDED, outcome.attempts(), outcome.httpStatus(),
                     outcome.durationMs(), null, null, false, seq);
+            return;
+        }
+        if (HttpStepExecutor.DEADLINE_EXCEEDED.equals(outcome.errorCode())) {
+            recordDeadlineCut(invocation, outcome, ref);
             return;
         }
         OnFailure policy = step.definition().effectiveOnFailure();
@@ -304,6 +346,48 @@ public class RunCoordinator {
         }
     }
 
+    /**
+     * US-5.1 AC3, AC4: an attempt cut by the deadline is never a step {@code TIMEOUT} and never re-sent. Not sent, or
+     * idempotent: {@code CANCELLED}; sent and not idempotent: {@code UNKNOWN}. Failure policies don't apply; the
+     * run stops with {@code DEADLINE}.
+     */
+    private void recordDeadlineCut(StepInvocation invocation, StepOutcome outcome, StepRef ref) {
+        java.util.UUID runId = invocation.runId();
+        CompiledStep step = invocation.step();
+        boolean sent = !outcome.trail().isEmpty();
+        StepStatus status = sent && !step.definition().effectiveIdempotent() ? StepStatus.UNKNOWN
+                : StepStatus.CANCELLED;
+        long seq = recorder.record(runId, status == StepStatus.UNKNOWN ? EventType.STEP_OUTCOME_UNKNOWN
+                : EventType.STEP_FAILED, ref, details("code", outcome.errorCode(), "status", status.name(),
+                        "sent", sent), null);
+        rows.finishStep(runId, step.id(), status, outcome.attempts(), outcome.httpStatus(), outcome.durationMs(),
+                outcome.errorCode(), outcome.errorMessage(), false, seq);
+        rows.stop(runId, DEADLINE, RUN_TIMEOUT, "Run deadline reached", null);
+    }
+
+    /** The segment timer fired (US-5.1): persist the stop, then let {@code advance} cancel and finalize. */
+    void deadlineReached(Lease lease) {
+        try {
+            boolean stopped = Boolean.TRUE.equals(inTx(s -> {
+                leases.lockFenced(lease);
+                RunRows.Run run = rows.run(lease.runId()).orElseThrow();
+                if (run.status().terminal() || run.stopReason() != null) {
+                    return false;
+                }
+                rows.stop(run.id(), DEADLINE, RUN_TIMEOUT, "Run deadline reached", null);
+                return true;
+            }));
+            if (stopped) {
+                List<String> running = rows.steps(lease.runId()).stream()
+                        .filter(st -> st.status() == StepStatus.RUNNING).map(RunRows.Step::stepId).toList();
+                log.warn("segment deadline reached runId={} inFlight={}", lease.runId(), running);
+                advance(lease);
+            }
+        } catch (LeaseLostException e) {
+            metrics.leaseLost();
+        }
+    }
+
     private void finish(RunRows.Run run, CompiledPipeline pipeline, RunStatus status, int stepCount) {
         ObjectNode context = context(run);
         RunStatus finalStatus = status;
@@ -322,10 +406,19 @@ public class RunCoordinator {
         EventType event = switch (finalStatus) {
             case COMPLETED -> EventType.RUN_COMPLETED;
             case COMPLETED_WITH_ERRORS -> EventType.RUN_COMPLETED_WITH_ERRORS;
+            case TIMED_OUT -> EventType.RUN_TIMED_OUT;
             default -> EventType.RUN_FAILED;
         };
         Map<String, Object> details = new HashMap<>();
         details.put("steps", stepCount);
+        if (finalStatus == RunStatus.TIMED_OUT) {
+            List<RunRows.Step> cut = rows.steps(run.id()).stream()
+                    .filter(st -> HttpStepExecutor.DEADLINE_EXCEEDED.equals(st.errorCode())).toList();
+            details.put("aborted", cut.stream().map(RunRows.Step::stepId).toList());
+            details.put("unknown", cut.stream().filter(st -> st.status() == StepStatus.UNKNOWN)
+                    .map(RunRows.Step::stepId).toList());
+            rows.deadlineAt(run.id()).ifPresent(at -> details.put("deadlineAt", at.toString()));
+        }
         if (run.startedAt() != null) {
             details.put("durationMs", java.time.Duration.between(run.startedAt(), Instant.now(clock)).toMillis());
         }
@@ -337,6 +430,7 @@ public class RunCoordinator {
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
+                deadlines.cancel(runId);
                 log.info("run finished runId={} status={}", runId, logged);
                 metrics.runFinished(run.pipelineCode(), logged.name(), java.time.Duration.between(
                         run.startedAt() != null ? run.startedAt() : run.createdAt(), Instant.now(clock)));
@@ -348,11 +442,11 @@ public class RunCoordinator {
     /** US-7.6 AC4: corrupt or moved context is never used; the run fails with {@code CONTEXT_DECRYPTION_FAILED}. */
     private void failUnreadable(Lease lease, ContextCipher.DecryptionException e) {
         try {
-            tx.executeWithoutResult(s -> {
+            inTx(s -> {
                 leases.lockFenced(lease);
                 RunRows.Run run = rows.run(lease.runId()).orElseThrow();
                 if (run.status().terminal()) {
-                    return;
+                    return null;
                 }
                 rows.stop(run.id(), "FAIL_RUN", ContextCipher.DecryptionException.CODE, e.getMessage(), null);
                 rows.steps(run.id()).stream().filter(st -> st.status() == StepStatus.PENDING)
@@ -365,9 +459,11 @@ public class RunCoordinator {
                 TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                     @Override
                     public void afterCommit() {
+                        deadlines.cancel(runId);
                         notifier.notifyDone(runId);
                     }
                 });
+                return null;
             });
         } catch (LeaseLostException lost) {
             metrics.leaseLost();
@@ -380,6 +476,39 @@ public class RunCoordinator {
         java.util.Set<String> ancestors = pipeline.ancestors(step.id());
         ((ObjectNode) view.path("steps")).retain(ancestors);
         return view;
+    }
+
+    /**
+     * One coordinator transaction, run again when SQL Server picks it as a deadlock victim or a lock wait times out.
+     * The transaction rolled back whole, so it is safe to repeat; it still starts with the fenced lock.
+     */
+    private <T> T inTx(org.springframework.transaction.support.TransactionCallback<T> work) {
+        for (int attempt = 1; ; attempt++) {
+            try {
+                return tx.execute(work);
+            } catch (org.springframework.dao.PessimisticLockingFailureException e) {
+                if (attempt >= LOCK_RETRIES) {
+                    throw e;
+                }
+                log.warn("transaction retried after {} attempt={}", e.getClass().getSimpleName(), attempt);
+                try {
+                    Thread.sleep(20L * attempt);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw e;
+                }
+            }
+        }
+    }
+
+    /** A transaction that keeps failing never strands a run: release it with a wake-up for recovery (US-5.5). */
+    private void releaseForRecovery(Lease lease, String what, RuntimeException e) {
+        log.error("{} failed runId={}; released for recovery", what, lease.runId(), e);
+        try {
+            leases.release(lease, true);
+        } catch (RuntimeException releaseFailed) {
+            log.error("release failed runId={}; the lease expires instead", lease.runId(), releaseFailed);
+        }
     }
 
     private ObjectNode context(RunRows.Run run) {

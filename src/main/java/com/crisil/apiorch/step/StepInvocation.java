@@ -16,6 +16,8 @@ import com.crisil.apiorch.engine.Lease;
  * @param execNo        1 for the first execution; incremented by resume (US-5.8)
  * @param context       the read-only expression context snapshot (README §8)
  * @param deadline      the run's segment deadline; each attempt's timeout is capped by the time left (US-5.1)
+ * @param timeoutMs     the step's {@code timeoutMs}, else the pipeline's {@code defaults.timeoutMs}; {@code null}
+ *                      means the endpoint's {@code readTimeoutMs}
  */
 public record StepInvocation(
         Lease lease,
@@ -25,7 +27,8 @@ public record StepInvocation(
         CompiledStep step,
         int execNo,
         JsonNode context,
-        Instant deadline) {
+        Instant deadline,
+        Integer timeoutMs) {
 
     public UUID runId() {
         return lease.runId();

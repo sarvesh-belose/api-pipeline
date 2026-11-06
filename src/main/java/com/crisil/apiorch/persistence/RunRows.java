@@ -132,6 +132,17 @@ public class RunRows {
                 .query(RunRows::mapStep).list();
     }
 
+    /** Milliseconds left in the run's segment, by database time; negative once past (US-5.1). */
+    public Optional<Long> remainingMs(UUID runId) {
+        return jdbc.sql("SELECT DATEDIFF(MILLISECOND, SYSUTCDATETIME(), deadline_at) FROM pipeline_run "
+                + "WHERE id = :id AND deadline_at IS NOT NULL").param("id", runId).query(Long.class).optional();
+    }
+
+    public Optional<Instant> deadlineAt(UUID runId) {
+        return jdbc.sql("SELECT deadline_at FROM pipeline_run WHERE id = :id AND deadline_at IS NOT NULL")
+                .param("id", runId).query((rs, i) -> instant(rs, "deadline_at")).optional();
+    }
+
     /** {@code RUNNING} with the segment deadline from database time (US-5.1 enforces it). */
     public void markRunning(UUID runId, long runTimeoutMs) {
         jdbc.sql("""

@@ -236,19 +236,33 @@ afterwards. `HttpStepExecutor` replaces the placeholder executor.
 reordered version is asserted in `SequentialRunIT`. Cross-node convergence is shown by a version written straight to the table (no local event)
 being picked up within the TTL; the two-context version waits for `ClusterTestSupport` engine hooks (US-5.5).
 
-**Sprint 4 status (2026-11-06): in progress** on `sprint4/*` branches; both tiers green (`verify -Pslow`, 395 tests).
+**Sprint 4 status (2026-11-06): in progress** on `sprint4/*` branches; both tiers green (`verify -Pslow`, 413 tests).
 
 | Planned | Delivered | Still to do this sprint |
 |---|---|---|
 | Finish US-7.6 → US-7.7 | US-7.6 for `run_context`: every entry stored `v1:<kid>:…` with `key_id`, keys by `env:`/`file:` reference (`apiorch.context.*`), startup fails without keys outside `local` (`plain:` with a WARN there), rotation report at startup, tampered or moved entries fail the run with `CONTEXT_DECRYPTION_FAILED`. US-7.7: `run_exchange` rows for the inbound request (creation transaction, true body size) and every response (decided under the run lock), exactly one `final = 1` row with the masked final resource; `GET /api/v1/runs/{runId}/exchanges/{kind}` (`apiorch.ops`) | Outbox payload encryption with US-6.5 (R2); exchanges in the timeline `calls[]` with US-7.4; AC4 (`COMPLETED_PENDING_ASYNC`) with US-6.3 (R2) |
 | US-4.7 → US-4.6 | US-4.7: `Idempotency-Key` per (pipeline, caller) with the canonical input hash; replays return the existing run (sync waits like the original, `Idempotent-Replayed: true`), different input is `422 idempotency-key-reuse`, a lost insert race replays; 20-request race on H2 and SQL Server. US-4.6: `FailurePolicyApplier` (pure); `FAIL_RUN` persists `stop_reason` with `error_code = STEP_FAILED` and `advance` honours it on every call; `CONTINUE` skips dependents `DEPENDENCY_FAILED`; `FALLBACK` flagged in `errors[]`, a failing fallback is `EXPRESSION_ERROR` and stops; cancelled steps in `errors[]`; output over partial data, `OUTPUT_EXPRESSION_ERROR` gives `COMPLETED_WITH_ERRORS` | US-4.7 AC7 with US-5.4 (admission) and US-3.7 (disabled); two-context race and `FailRunCrashIT` (US-4.6 AC2) with `ClusterTestSupport` (US-5.5); in-flight parallel branch in `FailRunIT` with US-4.4; `CONDITION_FALSE` skips count as success with US-4.5 (R3) |
-| Finish US-4.3 → US-4.4 → start US-5.5 | — | All three |
-| US-5.1 → start US-5.2 | — | Both |
+| Finish US-4.3 → US-4.4 → start US-5.5 | US-4.3: `ExpressionGuardsIT` (32 concurrent runs of one expression, recursion, `$pad` cap, `$sort` abort, all `EXPRESSION_ERROR` within the budget) and `TokenRefreshSingleAttemptIT` (one attempt row and one `TOKEN_REFRESHED`; a second `401` is `AUTH_ERROR`). US-4.4: ready steps submitted together in list order, capped by `apiorch.run.max-parallel-steps` (10) from the `RUNNING` rows under the run lock; `STEP_SKIPPED` names the failed dependency; each step's snapshot holds only its ancestors' results; `AdvanceRaceIT` (100 diamond runs, one request per step) on H2 and SQL Server | US-5.5 not started; the readiness rule stays in `RunDecision` (the story's `ReadySetCalculator`) |
+| US-5.1 → start US-5.2 | US-5.1: attempt timeout = step `timeoutMs`, else `defaults.timeoutMs`, else the endpoint read timeout, capped by the segment budget (database time) through 250 ms client buckets; a capped attempt that times out is `DEADLINE_EXCEEDED` and its step `CANCELLED` (idempotent or not sent) or `UNKNOWN` (sent, not idempotent); an `apiorch-deadline` timer and every `advance` persist `stop_reason = DEADLINE`; the run ends `TIMED_OUT` with `RUN_TIMEOUT` and `RUN_TIMED_OUT {deadlineAt, aborted, unknown}`; refused connections are `CONNECT_ERROR` | US-5.1 AC5 (post-completion segments) with US-6.3 (R2); AC7 (recovered after the deadline) with US-5.5; the black-hole connect test (`network` tag); US-5.2 not started |
 
 **Note (US-7.7):** a sync request still waiting on this node writes the final row itself; otherwise the finalizer
 writes it. A crash between the finalizing commit and the waiting request's response leaves no final row until recovery
 (US-5.5) backfills it, which is still to do. The response row is written just before the response is sent, and a failed write is logged
 without failing the response.
+
+**Note (US-4.4, found on SQL Server):** with many runs in parallel, `step_execution` (clustered on its random `id`)
+deadlocked: one run's `WHERE run_id = ?` read scanned other runs' rows. `sqlserver/V8` clusters it on
+`(run_id, step_id)`; the coordinator also repeats a transaction that lost a deadlock or a lock wait (it rolled back
+whole), and a transaction that keeps failing releases the run with a wake-up for recovery (US-5.5) instead of
+stranding it. `SqlDialect` now detects the database through the transaction's own connection, because 10 concurrent
+first transactions each asking for a second connection exhausted the pool. For production, enabling
+`READ_COMMITTED_SNAPSHOT` is on the US-8.5 handover list. `SyncRunThreadUsageIT` raises Tomcat's accept backlog
+to 300 so 200 simultaneous connects are not refused by the OS; on a heavily loaded machine its 6 s bound can still
+be missed (seen at 8–11 s while other processes held 68% CPU).
+
+**Note (US-5.1):** `RunDeadlineIT` uses `runTimeoutMs: 5000` with 500 ms steps and a 10 s third step, wider than
+the story's 3000/1 s/5 s, so a loaded machine keeps the first two steps inside the budget. It runs 5 repetitions
+rather than 20 to keep the fast tier short.
 
 **Note (US-7.6):** context keys are operator-configured, so they are resolved directly from `env:` or `file:` and the
 endpoint reference policy (US-2.2) does not apply to them. The test profile uses a fixed test-only key under
