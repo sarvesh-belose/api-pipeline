@@ -112,6 +112,18 @@ public class ApiorchMetrics {
         }
     }
 
+    /** {@code apiorch.admission.rejected}: new runs refused at this node's limit (US-5.4). */
+    public void admissionRejected() {
+        counter("apiorch.admission.rejected", "New runs refused by admission control", Tags.empty()).increment();
+    }
+
+    /** {@code apiorch.runs.inflight}: the admission count of runs this node drives (US-5.4). */
+    public void runsInflight(java.util.concurrent.atomic.AtomicInteger driven) {
+        io.micrometer.core.instrument.Gauge.builder("apiorch.runs.inflight", driven,
+                java.util.concurrent.atomic.AtomicInteger::get).description("Runs this node drives (admission count)")
+                .register(registry);
+    }
+
     /** {@code apiorch.lease.lost}. */
     public void leaseLost() {
         counter("apiorch.lease.lost", "Work discarded because this node no longer owned the run", Tags.empty())

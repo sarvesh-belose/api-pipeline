@@ -1,0 +1,19 @@
+{
+  "dslVersion": 1,
+  "code": "DEMO_ONBOARD",
+  "description": "Customer onboarding demo, v1: api1 -> api2 -> api3 -> api5 (US-8.1 slice A)",
+  "allowedCallers": ["dev-user"],
+  "logging": {"capture": "FULL", "maskKeys": ["pan"]},
+  "steps": [
+    {"id": "api1", "endpoint": "customer-svc", "method": "POST", "path": "/customers", "idempotent": true,
+     "body": "{ 'name': input.name, 'pan': input.pan }"},
+    {"id": "api2", "endpoint": "kyc-svc", "method": "POST", "path": "/kyc", "idempotent": true,
+     "body": "{ 'customerId': steps.api1.body.id }",
+     "retry": {"maxAttempts": 3, "backoff": "FIXED", "initialMs": 200, "maxMs": 1000}},
+    {"id": "api3", "endpoint": "score-svc", "method": "GET", "path": "/scores/{steps.api1.body.id}",
+     "onFailure": "FALLBACK", "fallback": "{ 'score': 0, 'source': 'fallback' }"},
+    {"id": "api5", "endpoint": "notify-svc", "method": "POST", "path": "/welcome", "onFailure": "CONTINUE",
+     "body": "{ 'customerId': steps.api1.body.id, 'kycRef': steps.api2.body.ref }"}
+  ],
+  "output": "{ 'customerId': steps.api1.body.id, 'kyc': steps.api2.body.status, 'score': steps.api3.body.score }"
+}

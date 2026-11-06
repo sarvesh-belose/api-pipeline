@@ -1,6 +1,15 @@
-# Optional SQL Server 2022 for production parity (US-1.1). The `local` profile needs no database service:
-# it runs on H2 in-memory. To use this one, start it and point SPRING_DATASOURCE_URL/USERNAME/PASSWORD at it.
+# The local demo (US-8.1): `docker compose up -d wiremock` serves the demo downstream APIs on :8089 from
+# demo/wiremock. The `local` profile needs no database service: it runs on H2 in-memory.
+# Optional SQL Server 2022 for production parity (US-1.1): start it with `--profile mssql` and point
+# SPRING_DATASOURCE_URL/USERNAME/PASSWORD at it.
 services:
+  wiremock:
+    image: wiremock/wiremock:3.13.2
+    ports: ["8089:8080"]
+    command: ["--global-response-templating", "--verbose"]
+    volumes:
+      - ./demo/wiremock:/home/wiremock
+    extra_hosts: ["host.docker.internal:host-gateway"]
   mssql:
     image: mcr.microsoft.com/mssql/server:2022-latest
     ports: ["1433:1433"]

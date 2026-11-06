@@ -206,11 +206,16 @@ public class RunRows {
         stop(runId, null, errorCode, errorMessage, null);
     }
 
-    /** Ends the run and gives up its lease. */
+    /** Asks whichever node drives the run, or any node if none does, to look at it again (US-5.7). */
+    public void requestWakeup(UUID runId) {
+        jdbc.sql("UPDATE pipeline_run SET wakeup_requested = 1 WHERE id = :id").param("id", runId).update();
+    }
+
+    /** Ends the run and gives up its lease; a pending wake-up is cleared so the ended run is never claimed. */
     public void finishRun(UUID runId, RunStatus status) {
         jdbc.sql("""
                 UPDATE pipeline_run SET status = :status, completed_at = SYSUTCDATETIME(), ended_at = SYSUTCDATETIME(),
-                    owner_instance = NULL, lease_until = NULL
+                    owner_instance = NULL, lease_until = NULL, wakeup_requested = 0
                 WHERE id = :id""").param("status", status.name()).param("id", runId).update();
     }
 

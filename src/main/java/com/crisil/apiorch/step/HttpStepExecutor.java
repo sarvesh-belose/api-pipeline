@@ -21,6 +21,7 @@ import org.springframework.http.HttpMethod;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
+import io.github.resilience4j.bulkhead.Bulkhead;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -53,6 +54,7 @@ public class HttpStepExecutor implements StepExecutor {
     static final long MIN_BUDGET_MS = 100;
     public static final String DEADLINE_EXCEEDED = "DEADLINE_EXCEEDED";
     public static final String CIRCUIT_OPEN = "CIRCUIT_OPEN";
+    public static final String BULKHEAD_FULL = "BULKHEAD_FULL";
 
     private final EndpointClientRegistry endpoints;
     private final ExpressionEvaluator evaluator;
@@ -114,18 +116,34 @@ public class HttpStepExecutor implements StepExecutor {
         CircuitBreaker circuit = runtime.get().circuitBreaker();
         String circuitState = circuit.getState().name();
         if (!circuit.tryAcquirePermission()) {
-            return rejected(invocation, endpointName, request, attemptNo);
+            return rejected(invocation, endpointName, request, attemptNo, CIRCUIT_OPEN, "OPEN", null,
+                    "Circuit open for endpoint '" + endpointName + "'");
+        }
+        // US-5.4: innermost, so a permit is held only while the request is in flight
+        Bulkhead bulkhead = runtime.get().bulkhead();
+        if (!bulkhead.tryAcquirePermission()) {
+            circuit.releasePermission();
+            log.warn("bulkhead full endpoint={} maxConcurrentCalls={}", endpointName,
+                    bulkhead.getBulkheadConfig().getMaxConcurrentCalls());
+            return rejected(invocation, endpointName, request, attemptNo, BULKHEAD_FULL, circuitState,
+                    "BulkheadFullException", "Bulkhead full for endpoint '" + endpointName + "'");
         }
         long seq;
         try {
             seq = attempts.requestSent(invocation, attemptNo, request.method());
         } catch (RuntimeException e) {
             circuit.releasePermission();
+            bulkhead.onComplete();
             throw e;
         }
         Instant startedAt = Instant.now(clock);
         log.info("step started method={} url={}", request.method(), masked(request.uri()));
-        Call call = send(runtime.get().restClient(attemptTimeout), request);
+        Call call;
+        try {
+            call = send(runtime.get().restClient(attemptTimeout), request);
+        } finally {
+            bulkhead.onComplete();
+        }
         ExchangeRecorder.Exchange exchange = call.exchange();
         // a failed exchange never completed, so its own duration is not the attempt's (US-5.1 AC1)
         long durationMs = exchange != null && call.failure() == null ? exchange.durationMs() : call.elapsedMs();
@@ -200,14 +218,28 @@ public class HttpStepExecutor implements StepExecutor {
      * {@code CIRCUIT_OPEN_REJECTED}. {@code CIRCUIT_OPEN} is never retried, so the step's policy applies at once.
      */
     private StepOutcome rejected(StepInvocation invocation, String endpointName, RequestBuilder.StepRequest request,
-            int attemptNo) {
+            int attemptNo, String outcome, String circuitState, String errorClass, String message) {
         Instant now = Instant.now(clock);
-        String message = "Circuit open for endpoint '" + endpointName + "'";
-        log.warn("attempt rejected endpoint={} outcome={}", endpointName, CIRCUIT_OPEN);
+        log.warn("attempt rejected endpoint={} outcome={}", endpointName, outcome);
         AttemptRecord record = new AttemptRecord(invocation.runId(), invocation.step().id(), invocation.execNo(),
                 attemptNo, "REQUEST", 0, endpointName, request.method(), request.uri().toString(), request.headers(),
-                null, 0, null, Map.of(), null, 0, CIRCUIT_OPEN, null, message, "OPEN", null, now, now, 0);
-        return StepOutcome.failed(null, CIRCUIT_OPEN, message, 1, 0)
+                null, 0, null, Map.of(), null, 0, outcome, errorClass, message, circuitState, null, now, now, 0);
+        return StepOutcome.failed(null, outcome, message, 1, 0)
+                .withTrail(List.of(new StepAttempt(record, false, List.of())));
+    }
+
+    /**
+     * US-5.4 AC6: the {@code step-io} queue refused the task, so nothing was sent. Recorded like a full bulkhead,
+     * and the retry policy applies.
+     */
+    public static StepOutcome saturated(StepInvocation invocation, Instant now) {
+        String endpoint = invocation.step().definition().endpoint();
+        String message = "step-io is saturated; the attempt was not started";
+        AttemptRecord record = new AttemptRecord(invocation.runId(), invocation.step().id(), invocation.execNo(),
+                invocation.attemptNo(), "REQUEST", 0, endpoint, invocation.step().definition().method().name(),
+                invocation.step().definition().path(), Map.of(), null, 0, null, Map.of(), null, 0, BULKHEAD_FULL,
+                "TaskRejectedException", message, null, null, now, now, 0);
+        return StepOutcome.failed(null, BULKHEAD_FULL, message, 1, 0)
                 .withTrail(List.of(new StepAttempt(record, false, List.of())));
     }
 

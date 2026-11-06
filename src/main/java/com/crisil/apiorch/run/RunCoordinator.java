@@ -89,6 +89,7 @@ public class RunCoordinator {
     private final CallerExchangeLog exchanges;
     private final DeadlineTimers deadlines;
     private final RetryTimers retries;
+    private final AdmissionControl admission;
     private final EndpointClientRegistry endpoints;
     private final Clock clock;
     private final long defaultRunTimeoutMs;
@@ -101,7 +102,7 @@ public class RunCoordinator {
             @Qualifier(ExecutorConfig.STEP_IO) ThreadPoolTaskExecutor stepIo, RunCompletionNotifier notifier,
             ExpressionEvaluator evaluator, AttemptWriter attempts, CapturePolicies captures,
             ApiorchMetrics metrics, CallerExchangeLog exchanges, DeadlineTimers deadlines, RetryTimers retries,
-            EndpointClientRegistry endpoints, Clock clock, ApiorchProperties properties) {
+            EndpointClientRegistry endpoints, AdmissionControl admission, Clock clock, ApiorchProperties properties) {
         this.tx = tx;
         this.rows = rows;
         this.leases = leases;
@@ -117,6 +118,7 @@ public class RunCoordinator {
         this.exchanges = exchanges;
         this.deadlines = deadlines;
         this.retries = retries;
+        this.admission = admission;
         this.endpoints = endpoints;
         this.clock = clock;
         this.defaultRunTimeoutMs = properties.run().defaultRunTimeoutMs();
@@ -162,7 +164,15 @@ public class RunCoordinator {
             return;
         }
         for (StepInvocation invocation : scheduled) {
-            submit(() -> run(invocation));
+            try {
+                submit(() -> run(invocation));
+            } catch (org.springframework.core.task.TaskRejectedException e) {
+                // US-5.4 AC6: nothing was sent; the attempt is BULKHEAD_FULL and the retry policy applies
+                StepOutcome outcome = HttpStepExecutor.saturated(invocation, Instant.now(clock));
+                if (!retry(invocation, outcome)) {
+                    complete(invocation, outcome);
+                }
+            }
         }
     }
 
@@ -208,6 +218,9 @@ public class RunCoordinator {
             if (DEADLINE.equals(stopReason)) {
                 // US-5.1 AC3: a normal segment past its deadline (post-completion segments come with US-6.3)
                 status = RunStatus.TIMED_OUT;
+            } else if (RunOperatorService.CANCEL.equals(stopReason)) {
+                // US-5.7 AC1: in-flight steps kept their real outcome; the run ends CANCELLED
+                status = RunStatus.CANCELLED;
             }
             finish(run, pipeline, status, steps.size());
             return List.of();
@@ -321,7 +334,16 @@ public class RunCoordinator {
         log.warn("attempt failed attempt={} outcome={} httpStatus={}", invocation.attemptNo(), outcome.errorCode(),
                 outcome.httpStatus());
         log.info("retry scheduled attempt={} delayMs={} reason={}", invocation.attemptNo() + 1, delay, reason);
-        retries.schedule(delay, () -> submit(() -> runRetry(invocation, outcome)));
+        retries.schedule(delay, () -> {
+            try {
+                submit(() -> runRetry(invocation, outcome));
+            } catch (org.springframework.core.task.TaskRejectedException e) {
+                StepOutcome saturated = HttpStepExecutor.saturated(invocation.nextAttempt(), Instant.now(clock));
+                if (!retry(invocation.nextAttempt(), saturated)) {
+                    complete(invocation.nextAttempt(), saturated);
+                }
+            }
+        });
         return true;
     }
 
@@ -467,9 +489,11 @@ public class RunCoordinator {
         for (StepAttempt attempt : outcome.trail()) {
             AttemptRecord a = attempt.record();
             StepRef ref = StepRef.attempt(a.stepId(), a.execNo(), a.attemptNo());
-            if (HttpStepExecutor.CIRCUIT_OPEN.equals(a.outcome())) {
-                a = a.withEventSeq(recorder.record(a.runId(), EventType.CIRCUIT_OPEN_REJECTED, ref,
-                        Map.of("endpoint", a.endpointName()), null));
+            if (HttpStepExecutor.CIRCUIT_OPEN.equals(a.outcome()) || HttpStepExecutor.BULKHEAD_FULL.equals(a.outcome())) {
+                EventType rejection = HttpStepExecutor.CIRCUIT_OPEN.equals(a.outcome()) ? EventType.CIRCUIT_OPEN_REJECTED
+                        : EventType.BULKHEAD_REJECTED;
+                a = a.withEventSeq(recorder.record(a.runId(), rejection, ref, Map.of("endpoint", a.endpointName()),
+                        null));
             }
             for (String endpoint : attempt.tokenRefreshes()) {
                 recorder.record(a.runId(), EventType.TOKEN_REFRESHED, ref, Map.of("endpoint", endpoint), null);
@@ -518,6 +542,8 @@ public class RunCoordinator {
                 leases.lockFenced(lease);
                 RunRows.Run run = rows.run(lease.runId()).orElseThrow();
                 if (run.status().terminal()) {
+                    leases.release(lease, false);
+                    admission.released();
                     return null;
                 }
                 metrics.runRecovered();
@@ -570,6 +596,7 @@ public class RunCoordinator {
             log.error("recovery failed runId={}; released without a wake-up for an operator", lease.runId(), e);
             try {
                 leases.release(lease, false);
+                admission.released();
             } catch (RuntimeException releaseFailed) {
                 log.error("release failed runId={}", lease.runId(), releaseFailed);
             }
@@ -626,6 +653,7 @@ public class RunCoordinator {
             case COMPLETED -> EventType.RUN_COMPLETED;
             case COMPLETED_WITH_ERRORS -> EventType.RUN_COMPLETED_WITH_ERRORS;
             case TIMED_OUT -> EventType.RUN_TIMED_OUT;
+            case CANCELLED -> EventType.RUN_CANCELLED;
             default -> EventType.RUN_FAILED;
         };
         Map<String, Object> details = new HashMap<>();
@@ -650,6 +678,7 @@ public class RunCoordinator {
             @Override
             public void afterCommit() {
                 deadlines.cancel(runId);
+                admission.released();
                 log.info("run finished runId={} status={}", runId, logged);
                 metrics.runFinished(run.pipelineCode(), logged.name(), java.time.Duration.between(
                         run.startedAt() != null ? run.startedAt() : run.createdAt(), Instant.now(clock)));
@@ -679,6 +708,7 @@ public class RunCoordinator {
                     @Override
                     public void afterCommit() {
                         deadlines.cancel(runId);
+                        admission.released();
                         notifier.notifyDone(runId);
                     }
                 });
@@ -750,6 +780,7 @@ public class RunCoordinator {
         log.error("{} failed runId={}; released for recovery", what, lease.runId(), e);
         try {
             leases.release(lease, true);
+            admission.released();
         } catch (RuntimeException releaseFailed) {
             log.error("release failed runId={}; the lease expires instead", lease.runId(), releaseFailed);
         }

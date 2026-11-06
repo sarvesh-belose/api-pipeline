@@ -275,12 +275,12 @@ rather than 20 to keep the fast tier short.
 endpoint reference policy (US-2.2) does not apply to them. The test profile uses a fixed test-only key under
 `src/test/resources/test-secrets`; production reads `APIORCH_SECRET_CTX_K1`.
 
-**Sprint 5 status (2026-11-06): in progress** on `sprint5/*` branches; both tiers green (`verify -Pslow`, 473 tests).
+**Sprint 5 status (2026-11-06): done**, merged into `main` (`be44911`); both tiers green (`verify -Pslow`, 474 tests).
 
 | Planned | Delivered | Left for later sprints |
 |---|---|---|
-| US-7.4 → finish US-7.5 | US-7.4: `GET /api/v1/runs/{runId}/timeline` (run, steps, attempts and exchanges merged by `event_seq`, totals, `include=events`) in at most 6 statements, each bounded by the run's lifetime on the table's partitioning column; attempt detail for `apiorch.ops` (masked as stored, `payloadPurged`); `PAYLOAD_ACCESSED {kind, stepId, execNo, attemptNo}` with the actor on attempt and exchange detail reads, `apiorch.payload.access.denied` on a `403`; `GET /api/v1/runs` search (pipeline, statuses, `created_at` window, correlation id, `createdBy` for ops), newest first, paged up to 100, owner-restricted. US-7.5: `resilience4j_circuitbreaker_*` per endpoint through one shared registry (a rebuild removes the old meters, no stale series), `apiorch_recovery_runs_recovered_total`, `apiorch_recovery_steps_unknown_total`, `apiorch_runs_driven`, `apiorch_runs_by_status{status}` (every 30 s from the database) | Callback entries and callback detail with US-6.2 (R2, `callback_inbox`); `TimelinePartitionEliminationIT` (execution-plan check on SQL Server); search through JPA `Specification`s is done with `JdbcClient` instead; the meters of later stories (AC6) with those stories |
-| Pair on US-5.5; finish US-5.5 | `GracefulShutdown` (`SmartLifecycle`, stopped before the web server): readiness `REFUSING_TRAFFIC`, new runs `503 shutting-down`, no new steps or retries, in-flight step tasks get up to `apiorch.shutdown.grace-ms` (20 s), then every lease is released with a wake-up; a draining node takes on no runs. Two-node tests: `CrashRecoveryIT` (renewal frozen on node A: B claims after the lease, `RUN_RECOVERED`, sends the interrupted GET again with the same key; A's late result is fenced and writes nothing; two sweepers recover 20 orphans once each) on H2 and SQL Server (`CrashRecoverySqlServerIT`); `GracefulShutdownIT` (a run longer than its lease stays with its node; a stopping node finishes its calls and hands its runs over) | An abrupt kill (`kill -9`) is simulated by freezing renewal, not by killing a JVM; `RecoveryIdempotentReplayIT` (AC8) |
+| US-7.4 → finish US-7.5 | US-7.4: `GET /api/v1/runs/{runId}/timeline` (run, steps, attempts and exchanges merged by `event_seq`, totals, `include=events`) in at most 6 statements, each bounded by the run's lifetime on the table's partitioning column; attempt detail for `apiorch.ops` (masked as stored, `payloadPurged`); `PAYLOAD_ACCESSED {kind, stepId, execNo, attemptNo}` with the actor on attempt and exchange detail reads, `apiorch.payload.access.denied` on a `403`; `GET /api/v1/runs` search (pipeline, statuses, `created_at` window, correlation id, `createdBy` for ops), newest first, paged up to 100, owner-restricted. US-7.5: `resilience4j_circuitbreaker_*` per endpoint through one shared registry (a rebuild removes the old meters, no stale series), `apiorch_recovery_runs_recovered_total`, `apiorch_recovery_steps_unknown_total`, `apiorch_runs_driven`, `apiorch_runs_by_status{status}` (every 30 s from the database) | Callback entries and callback detail with US-6.2 (R2, `callback_inbox`); search through JPA `Specification`s is done with `JdbcClient` instead; the meters of later stories (AC6) with those stories |
+| Pair on US-5.5; finish US-5.5 | `GracefulShutdown` (`SmartLifecycle`, stopped before the web server): readiness `REFUSING_TRAFFIC`, new runs `503 shutting-down`, no new steps or retries, in-flight step tasks get up to `apiorch.shutdown.grace-ms` (20 s), then every lease is released with a wake-up; a draining node takes on no runs. Two-node tests: `CrashRecoveryIT` (renewal frozen on node A: B claims after the lease, `RUN_RECOVERED`, sends the interrupted GET again with the same key; A's late result is fenced and writes nothing; two sweepers recover 20 orphans once each) on H2 and SQL Server (`CrashRecoverySqlServerIT`); `GracefulShutdownIT` (a run longer than its lease stays with its node; a stopping node finishes its calls and hands its runs over). AC8: after the crash, the caller's retry on node B with the same `Idempotency-Key` returns the recovered run, and nothing runs again | An abrupt kill (`kill -9`) is simulated by freezing renewal, not by killing a JVM |
 | Finish US-5.2 → US-5.3 | US-5.3: one Resilience4j circuit breaker per endpoint and node, from the endpoint's settings, rebuilt closed with the runtime; a rejection sends nothing and is recorded as a `CIRCUIT_OPEN` attempt with `CIRCUIT_OPEN_REJECTED`, never retried; connect, IO and timeout failures, 5xx and 429 count, other 4xx do not, deadline cuts and auth failures are not counted; WARN on every transition; `GET`/`POST …/circuit/reset` (`apiorch.ops`, reason required, `allNodes` rebuild) | Circuit reset audit rows with US-2.3; `BULKHEAD_FULL` retries with US-5.4 |
 
 **Note (US-5.5, found on SQL Server):** with two nodes sweeping and driving 20 runs, SQL Server ran out of the
@@ -289,6 +289,13 @@ Sprint 4 deadlock retry missed it, and one run failed with `INTERNAL_ERROR` beca
 gave up before anything was sent. `persistence.LockRetry` now repeats a whole transaction on a deadlock (1205) or a
 lock wait timeout (1222, H2 50200), in the coordinator and for `REQUEST_SENT`; a database error that still escapes
 the executor releases the run for recovery instead of failing it.
+
+**Note (US-7.4, found on SQL Server):** `TimelinePartitionEliminationIT` reads the actual execution plan of each
+timeline query over 3 000 rows spread across three months. A range on the partitioning column alone was not enough:
+the seek on the `run_id` index read all 5 partitions, because SQL Server does not derive the partition range when
+the index does not lead with that column. `SqlDialect.partitionRange` adds an explicit
+`$PARTITION.pf_month(col) BETWEEN …` on SQL Server (nothing on H2); the reads now touch at most 2 partitions, while
+the unbounded control reads all 5. Time bounds are bound as `LocalDateTime` so the driver sends `datetime2`.
 
 **Note (US-5.5 test isolation):** every cached test context shares the test database, so with a sweeper in each,
 one context claimed runs another test was watching and drove them with its own step executor. The `test` profile
@@ -300,6 +307,28 @@ contexts may still win a claim, so the concurrent-sweep test checks "once each",
 controller before closing the context, instead of a fixed 400 ms sleep that a loaded machine could miss.
 `RetryNoThreadBlockingIT` gives its endpoint a wide circuit window, because 20 failing runs would otherwise open the
 circuit (US-5.3) and stop the retries it counts.
+
+**Sprint 6 status (2026-11-06): in progress** on `sprint6/*` branches; both tiers green (`verify -Pslow`, 485 tests; perf smoke separately).
+
+| Planned | Delivered | Left for later sprints |
+|---|---|---|
+| US-5.4; US-7.5 circuit-breaker meters; security review | US-5.4: a semaphore bulkhead per endpoint and node (`maxWaitMs` 0), innermost after the circuit breaker; a full bulkhead or a refused `step-io` task is a `BULKHEAD_FULL` attempt (`BULKHEAD_REJECTED`) that sends nothing and is retried; `AdmissionControl` counts the runs this node holds a lease on (created, claimed, released, reconciled at every renewal) and refuses new runs past `apiorch.admission.max-in-flight-runs` with `429 admission-rejected` and `Retry-After: 1`, never replays or recovered runs; `apiorch.runs.inflight`, `apiorch.admission.rejected`, `resilience4j_bulkhead_*`. Circuit-breaker meters were delivered in Sprint 5. Security review pack: [`R1-security-review.md`](R1-security-review.md) | US-5.4 AC4 (waiting runs not driven are not counted) is true by construction and gets its test with US-6.3 (R2); the security review itself, at the S6 review |
+| US-8.1 slice A; R1 end-to-end exit suite | US-8.1 slice A: WireMock in Compose with the demo stubs, `LocalSeedRunner` (endpoints upserted, `DEMO_ONBOARD` v1 published once), the v2 reorder and the broken reorder as seed files, `demo/README.md`, `requests.http`, `walkthrough.ps1`; `DemoWalkthroughIT` runs the walkthrough in the build. The exit table (§9) now names the tests that exist and their status | Slice B (async demo) with US-6.3 (R2); the live demo at the S6 review |
+| US-5.7; slow-tier stabilization | US-5.7: `POST …/cancel` (reason required, `409 illegal-run-state` when terminal, `compensate` refused until US-5.6) stops the run through `stop_reason = CANCEL` and a wake-up; in-flight steps keep their real outcome and the run ends `CANCELLED`; `POST …/steps/{stepId}/resolve` records the operator's verdict on an `UNKNOWN` step without advancing the run. Finishing a run clears `wakeup_requested`. The slow tier ran green in every full build this sprint | Resume (US-5.8, R2); cancel of waiting runs and the late callback (AC3) with E6 |
+| Regression, defects, perf smoke, docs | Perf smoke `PerfSmokeIT` (tag `perf`, `./mvnw verify -Pperf`, `-Dperf.rate`, `-Dperf.seconds`): a 60 s run at 20 runs/s completed 1 200 of 1 200 with no refusals (start p95 24 ms, slowest run 4.6 s); the full 10-minute run at 20 runs/s completed 12 000 of 12 000 with no refusals (start p95 16 ms, slowest run 6.1 s) | US-8.2 (R2) is the NFR proof |
+
+**Note (US-8.1, found running the demo live):** the walkthrough was also run by hand against WireMock standalone
+(the same `demo/wiremock` mappings) and the `local` profile: ready in 28–35 s, seeded once, and every step behaved
+as described. It exposed a real defect: in dev security mode a sync run was executed but its caller got `401`. The
+response is written on an async dispatch (US-4.1), which `OncePerRequestFilter` skips by default, so the dev filter
+never set `dev-user` there; JWT mode was unaffected, which is why the build (all JWT) missed it.
+`DevUserFilter` now runs on async dispatches too, and `LocalDevModeIT` covers a sync run.
+
+**Note (perf smoke):** the first 60 s run lost 50 of 1 200 runs to `BULKHEAD_FULL`: all three steps call one
+endpoint, so 20 runs/s is 60 calls/s against the default bulkhead of 25, and on a loaded machine calls overlapped
+past 25 until the default 3 attempts ran out. That is the bulkhead doing its job; the smoke now gives its one
+endpoint a bulkhead of 100. Sizing `maxConcurrentCalls` per endpoint against its expected call rate belongs in
+the operations guide (US-8.4).
 
 ## 7. Cross-cutting enablers (in Sprint 1, so the four tracks don't block each other)
 
@@ -336,22 +365,26 @@ circuit (US-5.3) and stop the retries it counts.
 
 ## 9. R1 exit verification
 
-| Exit criterion (README §3) | Evidence |
-|---|---|
-| Sync and caller-async runs | `SyncRunIT`, `SyncRunThreadUsageIT` (US-4.1); `AsyncRunIT` (US-4.2) |
-| Sequence and DAG with mapping | `SequentialRunIT`, `PartialFieldMappingIT`, `EventSequenceIT` (US-4.3); `ParallelStepsIT`, `AdvanceRaceIT` (US-4.4) |
-| Retries, timeouts, circuit breakers, backpressure | `RetryIT`, `RetryBudgetIT` (US-5.2); `RunDeadlineIT` (US-5.1); `CircuitBreakerIT` (US-5.3); `BulkheadIT`, `AdmissionNoDriftIT` (US-5.4) |
-| Crash recovery, cancel and resolve | `CrashRecoveryIT`, `FencingIT`, `GracefulShutdownIT` (US-5.5); `CancelIT`, `ResolveUnknownIT` (US-5.7) |
-| Full activity log incl. caller exchange | US-7.1–7.4 and US-7.7 ITs; a timeline of the demo run shows inbound request, attempts and caller response |
-| Metrics | `MetricsIT`, `MetricCardinalityTest` (US-7.5) |
-| Encrypted working data | `EncryptedContextIT` reads the raw column (US-7.6) |
-| No-redeploy reorder and rollback | `ReorderNoRedeployIT`, `InFlightPinningIT` (US-3.3); `RollbackIT` (US-3.4) |
-| Reachable on a stable public address | `ForwardedHeadersIT`, `PublicBaseUrlGuardTest`, `ManagementPortIsolationIT` (US-1.4), plus the manual checklist against the R1 environment's load balancer |
-| Runnable reorder demo | US-8.1 slice A walkthrough, run live at the S6 review |
+The evidence column names the tests that exist on `main` (updated in Sprint 6; the first version named some
+planned classes whose cases ended up in others).
+
+| Exit criterion (README §3) | Evidence | Status |
+|---|---|---|
+| Sync and caller-async runs | `SyncRunIT`, `SyncRunThreadUsageIT` (US-4.1); `AsyncRunIT` (US-4.2) | green |
+| Sequence and DAG with mapping | `SequentialRunIT` (order, whole- and part-field mapping, gap-free event sequence), `ExpressionGuardsIT` (US-4.3); `ParallelStepsIT`, `ParallelLimitIT`, `AdvanceRaceIT`/`AdvanceRaceSqlServerIT` (US-4.4) | green |
+| Retries, timeouts, circuit breakers, backpressure | `RetryIT`, `RetryBudgetIT`, `RetryNoThreadBlockingIT` (US-5.2); `StepTimeoutIT`, `RunDeadlineIT` (US-5.1); `CircuitBreakerIT` (US-5.3); `BulkheadIT`, `AdmissionControlIT`, `ExecutorSaturationIT` (US-5.4) | green |
+| Crash recovery, cancel and resolve | `RecoveryIT`, `CrashRecoveryIT`/`CrashRecoverySqlServerIT` (claim, fencing, concurrent sweep, replay after recovery), `GracefulShutdownIT` (US-5.5); `CancelIT`, `ResolveUnknownIT` (US-5.7) | green |
+| Full activity log incl. caller exchange | `ActivityRecorderContract`, `AttemptCaptureIT`, `MaskingEndToEndIT`, `InboundExchangeIT`, `CallerResponseIT`, `ExchangeApiIT`, `TimelineIT`, `TimelineQueryCountIT`, `TimelinePartitionEliminationIT`, `RunSearchIT` (US-7.1–7.4, US-7.7); the demo run's timeline in `DemoWalkthroughIT` | green |
+| Metrics | `MetricsIT`, `ResilienceMetricsIT`, `MetricCardinalityTest` (US-7.5) | green |
+| Encrypted working data | `EncryptedContextIT` reads the raw column (US-7.6) | green |
+| No-redeploy reorder and rollback | `ReorderNoRedeployIT`, `InFlightPinningIT` (US-3.3); `RollbackIT` (US-3.4); `DemoWalkthroughIT` | green |
+| Reachable on a stable public address | `ForwardedHeadersIT`, `PublicBaseUrlGuardTest`, `ApplicationSmokeIT` (management port) (US-1.4), plus the manual checklist against the R1 environment's load balancer | automated part green; the load-balancer checklist needs the R1 environment |
+| Runnable reorder demo | US-8.1 slice A: `demo/README.md`, `demo/walkthrough.ps1`, and `DemoWalkthroughIT` over the same WireMock mappings | green in the build; to be run live at the S6 review |
+| R1 security review | [`R1-security-review.md`](R1-security-review.md) | pack ready; review not yet held |
 
 **Also in Sprint 6, but not exit gates:**
-- **Perf smoke:** 20 runs/s for 10 minutes on one node, to catch gross regressions. The full
-  NFR proof is US-8.2 in R2.
+- **Perf smoke:** 20 runs/s for 10 minutes on one node, to catch gross regressions: `PerfSmokeIT`,
+  `./mvnw verify -Pperf`. The full NFR proof is US-8.2 in R2.
 - **Partition check:** the current and next months' partitions exist in the R1 environment (see
   risk R6).
 

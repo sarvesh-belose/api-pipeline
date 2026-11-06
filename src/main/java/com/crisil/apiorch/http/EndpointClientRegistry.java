@@ -16,9 +16,13 @@ import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 import org.springframework.web.client.RestClient;
 
+import io.github.resilience4j.bulkhead.Bulkhead;
+import io.github.resilience4j.bulkhead.BulkheadConfig;
+import io.github.resilience4j.bulkhead.BulkheadRegistry;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
+import io.github.resilience4j.micrometer.tagged.TaggedBulkheadMetrics;
 import io.github.resilience4j.micrometer.tagged.TaggedCircuitBreakerMetrics;
 import io.micrometer.core.instrument.MeterRegistry;
 
@@ -53,6 +57,7 @@ public class EndpointClientRegistry {
     private final long maxResponseBytes;
     private final java.time.Clock clock;
     private final CircuitBreakerRegistry circuits = CircuitBreakerRegistry.ofDefaults();
+    private final BulkheadRegistry bulkheads = BulkheadRegistry.ofDefaults();
 
     public EndpointClientRegistry(EndpointRepository repository, EndpointMapper mapper,
             RestClient.Builder restClientBuilder, SecretResolver secrets, OAuth2TokenCache tokens,
@@ -60,6 +65,7 @@ public class EndpointClientRegistry {
         this.clock = clock;
         // US-7.5 AC3: resilience4j_circuitbreaker_* tagged with the endpoint name (bounded by the endpoint table)
         TaggedCircuitBreakerMetrics.ofCircuitBreakerRegistry(circuits).bindTo(meters);
+        TaggedBulkheadMetrics.ofBulkheadRegistry(bulkheads).bindTo(meters);
         this.repository = repository;
         this.mapper = mapper;
         this.restClientBuilder = restClientBuilder;
@@ -92,6 +98,7 @@ public class EndpointClientRegistry {
                 boolean gone = !stored.containsKey(name);
                 if (gone) {
                     circuits.remove(name);
+                    bulkheads.remove(name);
                     log.info("endpoint runtime removed name={}", name);
                 }
                 return gone;
@@ -112,6 +119,7 @@ public class EndpointClientRegistry {
         if (entity.isEmpty()) {
             runtimes.remove(name);
             circuits.remove(name);
+            bulkheads.remove(name);
             return Optional.empty();
         }
         EndpointRuntime runtime = build(mapper.toConfig(entity.get()));
@@ -135,7 +143,23 @@ public class EndpointClientRegistry {
             builder.requestInterceptor(new AuthInterceptor(config.name(), config.auth(), secrets, tokens));
         }
         RestClient restClient = builder.build();
-        return new EndpointRuntime(config, restClient, httpClient, circuitBreaker(config));
+        return new EndpointRuntime(config, restClient, httpClient, circuitBreaker(config), bulkhead(config));
+    }
+
+    /**
+     * US-5.4: a semaphore bulkhead from the endpoint's settings (defaults fill what it omits). With
+     * {@code maxWaitMs = 0} a full bulkhead refuses at once, so no thread waits for a permit.
+     */
+    private Bulkhead bulkhead(EndpointConfig config) {
+        EndpointConfig.Bulkhead b = config.bulkhead();
+        BulkheadConfig.Builder c = BulkheadConfig.custom();
+        if (b != null) {
+            c.maxConcurrentCalls(b.maxConcurrentCalls()).maxWaitDuration(Duration.ofMillis(b.maxWaitMs()));
+        } else {
+            c.maxWaitDuration(Duration.ZERO);
+        }
+        bulkheads.remove(config.name());
+        return bulkheads.bulkhead(config.name(), c.build());
     }
 
     /** When this node's circuit for {@code name} last changed state, or was built; for the circuit API (US-5.3). */

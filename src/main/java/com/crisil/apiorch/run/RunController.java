@@ -56,16 +56,18 @@ public class RunController {
     private final RunResourceAssembler assembler;
     private final CallerExchangeLog exchanges;
     private final TimelineService timelines;
+    private final RunOperatorService operators;
     private final ThreadPoolTaskExecutor responses;
 
     public RunController(RunService runs, RunQueryService queries, RunResourceAssembler assembler,
-            CallerExchangeLog exchanges, TimelineService timelines,
+            CallerExchangeLog exchanges, TimelineService timelines, RunOperatorService operators,
             @Qualifier(ExecutorConfig.RUN_RESPONSE) ThreadPoolTaskExecutor responses) {
         this.runs = runs;
         this.queries = queries;
         this.assembler = assembler;
         this.exchanges = exchanges;
         this.timelines = timelines;
+        this.operators = operators;
         this.responses = responses;
     }
 
@@ -115,6 +117,42 @@ public class RunController {
         List<ExchangeView> rows = queries.exchanges(runId, kind);
         timelines.recordAccess(UUID.fromString(runId), kind, null, null, null, caller);
         return rows;
+    }
+
+    /** US-5.7 AC1–AC4: cancel with an audit reason ({@code apiorch.ops}); {@code 202}, completes asynchronously. */
+    @PostMapping("/api/v1/runs/{runId}/cancel")
+    public ResponseEntity<RunResource> cancel(@PathVariable String runId, @RequestBody JsonNode body,
+            Authentication caller) {
+        RunResource resource = operators.cancel(runIdOf(runId), text(body, "reason"),
+                body.path("compensate").asBoolean(false), caller.getName());
+        return ResponseEntity.status(HttpStatus.ACCEPTED).header("X-Apiorch-Run-Id", runId)
+                .header("X-Apiorch-Run-Status", resource.status()).body(resource);
+    }
+
+    /** US-5.7 AC5, AC6: resolve an {@code UNKNOWN} step ({@code apiorch.ops}); the run is not advanced. */
+    @PostMapping("/api/v1/runs/{runId}/steps/{stepId}/resolve")
+    public RunResource.Step resolve(@PathVariable String runId, @PathVariable String stepId, @RequestBody JsonNode body,
+            Authentication caller) {
+        JsonNode stepBody = body.has("body") ? body.get("body") : null;
+        Integer httpStatus = body.hasNonNull("httpStatus") ? body.get("httpStatus").asInt() : null;
+        return operators.resolve(runIdOf(runId), stepId, text(body, "outcome"), stepBody, httpStatus,
+                text(body, "reason"), caller.getName());
+    }
+
+    private static String text(JsonNode body, String field) {
+        return body.hasNonNull(field) ? body.get(field).asText() : null;
+    }
+
+    private static UUID runIdOf(String runId) {
+        try {
+            UUID id = UUID.fromString(runId);
+            if (id.toString().equalsIgnoreCase(runId)) {
+                return id;
+            }
+        } catch (IllegalArgumentException e) {
+            // reported as not found below
+        }
+        throw RunResourceAssembler.notFound(runId);
     }
 
     /** US-7.4: the run's calls in order, without bodies; the creator or {@code apiorch.ops}. */

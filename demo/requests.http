@@ -1,0 +1,70 @@
+### US-8.1 slice A walkthrough. Dev security (local profile): no token needed.
+@app = http://localhost:8080
+@wiremock = http://localhost:8089
+
+### 1. Run v1 (api1 -> api2 -> api3 -> api5)
+POST {{app}}/api/v1/pipelines/DEMO_ONBOARD/runs?mode=sync
+Content-Type: application/json
+
+{"name": "Asha Rao", "pan": "ABCDE1234F"}
+
+### 2. Timeline of that run (set runId from the response above)
+GET {{app}}/api/v1/runs/{{runId}}/timeline?include=events
+
+### 3a. Reorder: save v2 as the draft. Paste the content of
+###     src/main/resources/seed/DEMO_ONBOARD.v2-reordered.json as "definition".
+PUT {{app}}/api/v1/admin/pipelines/DEMO_ONBOARD/draft
+Content-Type: application/json
+
+{"definition": {}}
+
+### 3b. Publish v2: no redeploy
+POST {{app}}/api/v1/admin/pipelines/DEMO_ONBOARD/publish
+Content-Type: application/json
+
+{"comment": "business reorder: notify before scoring"}
+
+### 3c. Run again: version 2, /welcome before /scores
+POST {{app}}/api/v1/pipelines/DEMO_ONBOARD/runs?mode=sync
+Content-Type: application/json
+
+{"name": "Asha Rao", "pan": "ABCDE1234F"}
+
+### 4a. A broken reorder: paste src/main/resources/seed/DEMO_ONBOARD.invalid-reorder.json as "definition"
+PUT {{app}}/api/v1/admin/pipelines/DEMO_ONBOARD/draft
+Content-Type: application/json
+
+{"definition": {}}
+
+### 4b. Publish it: 422 FORWARD_REFERENCE
+POST {{app}}/api/v1/admin/pipelines/DEMO_ONBOARD/publish
+Content-Type: application/json
+
+{}
+
+### 5. KYC flaky (503, 503, 200): the next run still completes, with 3 attempts on api2
+PUT {{wiremock}}/__admin/scenarios/kyc/state
+Content-Type: application/json
+
+{"state": "flaky"}
+
+### 6a. KYC down (always 503): after five failures the circuit opens
+PUT {{wiremock}}/__admin/scenarios/kyc/state
+Content-Type: application/json
+
+{"state": "down"}
+
+### 6b. Circuit state on this node
+GET {{app}}/api/v1/admin/endpoints/kyc-svc/circuit
+
+### 6c. Back to normal
+PUT {{wiremock}}/__admin/scenarios/kyc/state
+Content-Type: application/json
+
+{"state": "Started"}
+
+### 6d. Reset the circuit
+POST {{app}}/api/v1/admin/endpoints/kyc-svc/circuit/reset
+Content-Type: application/json
+
+{"reason": "KYC back"}

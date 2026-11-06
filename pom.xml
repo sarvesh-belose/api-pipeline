@@ -36,8 +36,11 @@
     <archunit.version>1.5.1</archunit.version>
     <jacoco.version>0.8.16</jacoco.version>
     <!-- test tiers (US-1.1 AC10): failsafe skips `slow` unless -Pslow -->
-    <it.excludedGroups>slow</it.excludedGroups>
+    <it.excludedGroups>slow,perf</it.excludedGroups>
     <it.groups></it.groups>
+    <!-- the R1 perf smoke's load (plan §9), overridable with -Dperf.rate and -Dperf.seconds -->
+    <perf.rate>20</perf.rate>
+    <perf.seconds>600</perf.seconds>
   </properties>
 
   <dependencyManagement>
@@ -61,6 +64,8 @@
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-data-jpa</artifactId></dependency>
     <!-- US-5.3: one circuit breaker per endpoint and node (README §6); created programmatically, no Boot starter -->
     <dependency><groupId>io.github.resilience4j</groupId><artifactId>resilience4j-circuitbreaker</artifactId><version>${resilience4j.version}</version></dependency>
+    <!-- US-5.4: a semaphore bulkhead per endpoint and node -->
+    <dependency><groupId>io.github.resilience4j</groupId><artifactId>resilience4j-bulkhead</artifactId><version>${resilience4j.version}</version></dependency>
     <!-- US-7.5: resilience4j_circuitbreaker_* meters per endpoint -->
     <dependency><groupId>io.github.resilience4j</groupId><artifactId>resilience4j-micrometer</artifactId><version>${resilience4j.version}</version></dependency>
     <dependency><groupId>org.flywaydb</groupId><artifactId>flyway-core</artifactId></dependency>
@@ -96,6 +101,10 @@
         <configuration>
           <excludedGroups>${it.excludedGroups}</excludedGroups>
           <groups>${it.groups}</groups>
+          <systemPropertyVariables>
+            <perf.rate>${perf.rate}</perf.rate>
+            <perf.seconds>${perf.seconds}</perf.seconds>
+          </systemPropertyVariables>
         </configuration>
         <executions>
           <execution><goals><goal>integration-test</goal><goal>verify</goal></goals></execution>
@@ -166,7 +175,16 @@
       <!-- slow tier (README §13), run locally: every IT, including `slow` ones on SQL Server -->
       <id>slow</id>
       <properties>
+        <it.excludedGroups>perf</it.excludedGroups>
+      </properties>
+    </profile>
+    <!-- the R1 perf smoke only (plan §9): ./mvnw verify -Pperf [-Dperf.rate=20 -Dperf.seconds=600] -->
+    <profile>
+      <id>perf</id>
+      <properties>
         <it.excludedGroups></it.excludedGroups>
+        <it.groups>perf</it.groups>
+        <jacoco.skip>true</jacoco.skip>
       </properties>
     </profile>
   </profiles>

@@ -11,6 +11,7 @@ public class ApiProblemException extends RuntimeException {
     private final HttpStatus status;
     private final String slug;
     private final Map<String, Object> properties = new LinkedHashMap<>();
+    private final Map<String, String> headers = new LinkedHashMap<>();
 
     public ApiProblemException(HttpStatus status, String slug, String detail) {
         super(detail);
@@ -34,5 +35,15 @@ public class ApiProblemException extends RuntimeException {
 
     public Map<String, Object> properties() {
         return properties;
+    }
+
+    /** Adds a response header, for example {@code Retry-After} on {@code 429} (US-5.4). */
+    public ApiProblemException header(String name, String value) {
+        headers.put(name, value);
+        return this;
+    }
+
+    public Map<String, String> headers() {
+        return headers;
     }
 }
