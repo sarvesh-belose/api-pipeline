@@ -120,7 +120,8 @@ class SyncRunIT {
         HttpResponse<String> res = start(code, "{\"name\":\"Asha\"}");
         assertThat(res.statusCode()).isEqualTo(202);
         String runId = body(res).path("runId").asText();
-        assertThat(res.headers().firstValue("Location")).hasValue("/api/v1/runs/" + runId);
+        // absolute, from the address the caller used (US-1.4 AC2)
+        assertThat(res.headers().firstValue("Location")).hasValue("http://localhost:" + port + "/api/v1/runs/" + runId);
         assertThat(res.headers().firstValue("Retry-After")).hasValue("2");
         assertThat(body(res).path("status").asText()).isEqualTo("RUNNING");
         stub.release("api2");

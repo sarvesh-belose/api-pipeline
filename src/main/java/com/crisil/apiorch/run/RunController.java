@@ -25,6 +25,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
 import com.fasterxml.jackson.databind.JsonNode;
 
@@ -89,12 +90,16 @@ public class RunController {
         RunService.Started started = runs.start(code, version, input, sync, correlationId, inbound(request, input),
                 idempotencyKey, caller);
         boolean replayed = started.replayed();
+        // US-1.4 AC2: the public address as the caller used it (forwarded headers are honoured only from trusted
+        // proxies), taken now because a sync response is built later on another thread
+        URI location = URI.create(ServletUriComponentsBuilder.fromRequest(request).replacePath(request.getContextPath())
+                .replaceQuery(null).path("/api/v1/runs/{id}").buildAndExpand(started.runId()).toUriString());
         if (!sync) {
             return CompletableFuture.completedFuture(exchanges.respond(started.runId(), () -> {
                 RunResource resource = replayed ? assembler.assemble(started.runId())
                         : RunResourceAssembler.accepted(started.runId(), code, started.version());
                 ResponseEntity.BodyBuilder accepted = ResponseEntity.status(HttpStatus.ACCEPTED)
-                        .location(URI.create("/api/v1/runs/" + started.runId()))
+                        .location(location)
                         .header("X-Apiorch-Run-Id", started.runId().toString())
                         .header("X-Apiorch-Run-Status", resource.status());
                 if (preferAsync) {
@@ -108,7 +113,7 @@ public class RunController {
         }
         long waitStart = System.nanoTime();
         return started.done().thenApplyAsync(done -> exchanges.respond(started.runId(),
-                () -> respond(started.runId(), waitStart, replayed), replayed), responses);
+                () -> respond(started.runId(), location, waitStart, replayed), replayed), responses);
     }
 
     /** US-7.7: the caller's exchange rows, oldest first ({@code apiorch.ops}); the read is recorded (US-7.4). */
@@ -219,11 +224,11 @@ public class RunController {
         return false;
     }
 
-    private ResponseEntity<RunResource> respond(UUID runId, long waitStart, boolean replayed) {
+    private ResponseEntity<RunResource> respond(UUID runId, URI location, long waitStart, boolean replayed) {
         RunResource resource = assembler.assemble(runId);
         boolean done = RunStatus.valueOf(resource.status()).doneForCaller();
         ResponseEntity.BodyBuilder builder = done ? ResponseEntity.ok()
-                : ResponseEntity.status(HttpStatus.ACCEPTED).location(URI.create("/api/v1/runs/" + runId))
+                : ResponseEntity.status(HttpStatus.ACCEPTED).location(location)
                         .header("Retry-After", "2");
         log.info("run responded runId={} httpStatus={} waitedMs={}", runId, done ? 200 : 202,
                 (System.nanoTime() - waitStart) / 1_000_000);
