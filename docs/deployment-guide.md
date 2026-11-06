@@ -64,6 +64,28 @@ Desktop the simulated proxy and a direct caller both arrive from loopback.
 
 ## 5. Before go-live in the R1 environment
 
+Status on 2026-11-06: the R1 environment is not deployed yet, so the R1 column of §3 stays open.
+
 1. Fill in the R1 column of §3.
-2. Run AC1, AC2, AC5 and AC6 against the real load balancer (the commands in §4 apply with the real addresses).
+2. Run `tools/r1-checks/check-public-address.sh` against the real load balancer. It covers AC1, AC2, AC3 routing,
+   AC5 and L4 (readiness on every node's management port), prints one PASS or FAIL line per check and exits `1` on
+   any failure:
+
+   ```bash
+   export APIORCH_PUBLIC_BASE_URL=https://<public host>
+   export APIORCH_NODE_API_URLS=http://<node1>:8080,http://<node2>:8080
+   export APIORCH_NODE_MGMT_URLS=http://<node1>:9091,http://<node2>:9091
+   export APIORCH_CHECK_PIPELINE=<a published pipeline that is safe to run repeatedly>
+   export APIORCH_TOKEN=...   # a token with apiorch.run and apiorch.ops; set in the shell, never printed or stored
+   tools/r1-checks/check-public-address.sh
+   ```
+
+   Then run `tools/r1-checks/check-public-address.sh --during-shutdown` (AC6) and send SIGTERM to one node while it
+   runs; it reports every response that was not `202`. Afterwards confirm that no run is left `RUNNING`.
+
+   Rehearsed on the local simulation (2026-11-06): every check passed (AC1 `200 COMPLETED`, AC2
+   `https://apiorch.test.example.internal/api/v1/runs/{id}`, AC3 the same `404` path, AC5 `404`, L4 `200` on both
+   nodes); a wrong `APIORCH_LOCATION_BASE` made AC2 fail with exit `1`; `--during-shutdown` for 20 s while node A
+   stopped gracefully sent 27 runs, all `202`, and left none `ACCEPTED` or `RUNNING`.
 3. Confirm the health check removes a node within its interval when readiness turns `REFUSING_TRAFFIC` (L4).
+4. Record the results in a column next to §4's.
