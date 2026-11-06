@@ -39,7 +39,8 @@ v1 runs `api1 → api2 → api3 → api5`. v2 (`src/main/resources/seed/DEMO_ONB
 ## Walkthrough
 
 Run `demo/walkthrough.ps1` for a scripted version with pauses, or send the requests in `demo/requests.http` one
-by one. Each step says what to look at.
+by one. Each step says what to look at. Start from a freshly started app: on a reused one, step 3 answers `409 no-changes` because v2 is
+already published (the script still runs to the end, and resets KYC and its circuit first).
 
 1. **Run v1.** `POST /api/v1/pipelines/DEMO_ONBOARD/runs?mode=sync` returns `200 COMPLETED` with the combined
    output `{customerId, kyc, score}`.
