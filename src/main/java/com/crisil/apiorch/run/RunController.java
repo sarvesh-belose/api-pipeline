@@ -47,6 +47,8 @@ public class RunController {
     private static final Logger log = LoggerFactory.getLogger(RunController.class);
 
     private static final String RESPOND_ASYNC = "respond-async";
+    static final String IDEMPOTENCY_KEY = "Idempotency-Key";
+    static final String REPLAYED = "Idempotent-Replayed";
 
     private final RunService runs;
     private final RunQueryService queries;
@@ -68,6 +70,7 @@ public class RunController {
             @RequestParam(name = "mode", required = false) String mode,
             @RequestParam(name = "version", required = false) Integer version,
             @RequestHeader(name = "Prefer", required = false) String prefer,
+            @RequestHeader(name = IDEMPOTENCY_KEY, required = false) String idempotencyKey,
             @RequestBody JsonNode input, HttpServletRequest request, Authentication caller) {
         boolean preferAsync = mode == null && prefersAsync(prefer);
         boolean sync = switch (mode == null ? (preferAsync ? "async" : "sync") : mode) {
@@ -78,22 +81,28 @@ public class RunController {
         };
         String correlationId = (String) request.getAttribute(CorrelationIdFilter.ATTRIBUTE);
         RunService.Started started = runs.start(code, version, input, sync, correlationId, inbound(request, input),
-                caller);
+                idempotencyKey, caller);
+        boolean replayed = started.replayed();
         if (!sync) {
             return CompletableFuture.completedFuture(exchanges.respond(started.runId(), () -> {
+                RunResource resource = replayed ? assembler.assemble(started.runId())
+                        : RunResourceAssembler.accepted(started.runId(), code, started.version());
                 ResponseEntity.BodyBuilder accepted = ResponseEntity.status(HttpStatus.ACCEPTED)
                         .location(URI.create("/api/v1/runs/" + started.runId()))
                         .header("X-Apiorch-Run-Id", started.runId().toString())
-                        .header("X-Apiorch-Run-Status", "ACCEPTED");
+                        .header("X-Apiorch-Run-Status", resource.status());
                 if (preferAsync) {
                     accepted.header("Preference-Applied", RESPOND_ASYNC);
                 }
-                return accepted.body(RunResourceAssembler.accepted(started.runId(), code, started.version()));
-            }, false));
+                if (replayed) {
+                    accepted.header(REPLAYED, "true");
+                }
+                return accepted.body(resource);
+            }, replayed));
         }
         long waitStart = System.nanoTime();
         return started.done().thenApplyAsync(done -> exchanges.respond(started.runId(),
-                () -> respond(started.runId(), waitStart), false), responses);
+                () -> respond(started.runId(), waitStart, replayed), replayed), responses);
     }
 
     /** US-7.7: the caller's exchange rows, oldest first ({@code apiorch.ops}). */
@@ -139,7 +148,7 @@ public class RunController {
         return false;
     }
 
-    private ResponseEntity<RunResource> respond(UUID runId, long waitStart) {
+    private ResponseEntity<RunResource> respond(UUID runId, long waitStart, boolean replayed) {
         RunResource resource = assembler.assemble(runId);
         boolean done = RunStatus.valueOf(resource.status()).doneForCaller();
         ResponseEntity.BodyBuilder builder = done ? ResponseEntity.ok()
@@ -147,6 +156,9 @@ public class RunController {
                         .header("Retry-After", "2");
         log.info("run responded runId={} httpStatus={} waitedMs={}", runId, done ? 200 : 202,
                 (System.nanoTime() - waitStart) / 1_000_000);
+        if (replayed) {
+            builder.header(REPLAYED, "true");
+        }
         return builder.header("X-Apiorch-Run-Id", runId.toString())
                 .header("X-Apiorch-Run-Status", resource.status()).body(resource);
     }

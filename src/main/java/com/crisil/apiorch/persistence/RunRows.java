@@ -60,12 +60,23 @@ public class RunRows {
     /** README §5.1 rule 6: the run is created owned by this node, at epoch 1. */
     public void insertRun(UUID id, String code, int version, String mode, String correlationId, String createdBy,
             String owner, long leaseMs) {
+        insertRun(id, code, version, mode, correlationId, createdBy, owner, leaseMs, null, null);
+    }
+
+    /**
+     * As above, with the caller's {@code Idempotency-Key} and the input hash (US-4.7).
+     *
+     * @throws org.springframework.dao.DataIntegrityViolationException when the key is already used
+     */
+    public void insertRun(UUID id, String code, int version, String mode, String correlationId, String createdBy,
+            String owner, long leaseMs, String idempotencyKey, String requestHash) {
         jdbc.sql("""
                 INSERT INTO pipeline_run (id, pipeline_code, pipeline_version, status, mode, correlation_id, created_by,
-                                          created_at, owner_instance, lease_epoch, lease_until)
+                                          created_at, owner_instance, lease_epoch, lease_until, idempotency_key,
+                                          request_hash)
                 VALUES (:id, :code, :version, 'ACCEPTED', :mode, :cid, :by, SYSUTCDATETIME(), :owner, 1,
-                        DATEADD(MILLISECOND, :leaseMs, SYSUTCDATETIME()))""")
-                .param("id", id).param("code", code).param("version", version).param("mode", mode)
+                        DATEADD(MILLISECOND, :leaseMs, SYSUTCDATETIME()), :key, :hash)""")
+                .param("key", idempotencyKey).param("hash", requestHash).param("id", id).param("code", code).param("version", version).param("mode", mode)
                 .param("cid", correlationId).param("by", createdBy).param("owner", owner).param("leaseMs", leaseMs)
                 .update();
     }

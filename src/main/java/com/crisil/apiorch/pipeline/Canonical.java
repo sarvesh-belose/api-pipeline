@@ -15,12 +15,12 @@ import com.crisil.apiorch.definition.DslJsonMapper;
  * The canonical form a published checksum covers (US-3.3): object keys sorted, array order preserved, so a reorder
  * of {@code steps[]} is a change and a reordering of keys is not.
  */
-final class Canonical {
+public final class Canonical {
 
     private Canonical() {
     }
 
-    static String of(JsonNode document) {
+    public static String of(JsonNode document) {
         try {
             return DslJsonMapper.get().writeValueAsString(sorted(document));
         } catch (JsonProcessingException e) {
