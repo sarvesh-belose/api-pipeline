@@ -69,6 +69,11 @@ public class ApiorchMetrics {
                 .increment();
     }
 
+    /** {@code apiorch.payload.access.denied}: a detail read refused with {@code 403} (US-7.4 AC9). */
+    public void payloadAccessDenied() {
+        counter("apiorch.payload.access.denied", "Payload detail reads refused", Tags.empty()).increment();
+    }
+
     /** {@code apiorch.lease.lost}. */
     public void leaseLost() {
         counter("apiorch.lease.lost", "Work discarded because this node no longer owned the run", Tags.empty())

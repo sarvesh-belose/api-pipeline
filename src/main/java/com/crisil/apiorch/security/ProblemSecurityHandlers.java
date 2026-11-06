@@ -19,6 +19,10 @@ import org.springframework.stereotype.Component;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import org.springframework.util.AntPathMatcher;
+
+import com.crisil.apiorch.observability.ApiorchMetrics;
+
 import com.crisil.apiorch.observability.Problems;
 
 /**
@@ -31,11 +35,18 @@ public class ProblemSecurityHandlers implements AuthenticationEntryPoint, Access
 
     private static final Logger log = LoggerFactory.getLogger(ProblemSecurityHandlers.class);
 
+    /** The detail reads that return bodies (US-7.4 AC9); a refusal is counted, nothing is recorded on the run. */
+    static final java.util.List<String> PAYLOAD_DETAIL = java.util.List.of("/api/v1/runs/*/steps/*/attempts/*",
+            "/api/v1/runs/*/steps/*/callbacks/*", "/api/v1/runs/*/exchanges/*");
+
     private final BearerTokenAuthenticationEntryPoint bearer = new BearerTokenAuthenticationEntryPoint();
     private final ObjectMapper json;
+    private final ApiorchMetrics metrics;
+    private final AntPathMatcher paths = new AntPathMatcher();
 
-    public ProblemSecurityHandlers(ObjectMapper json) {
+    public ProblemSecurityHandlers(ObjectMapper json, ApiorchMetrics metrics) {
         this.json = json;
+        this.metrics = metrics;
     }
 
     @Override
@@ -51,6 +62,10 @@ public class ProblemSecurityHandlers implements AuthenticationEntryPoint, Access
     public void handle(HttpServletRequest request, HttpServletResponse response, AccessDeniedException ex)
             throws IOException {
         log.warn("access denied path={} clientIp={}", request.getRequestURI(), request.getRemoteAddr());
+        String path = request.getRequestURI().substring(request.getContextPath().length());
+        if (PAYLOAD_DETAIL.stream().anyMatch(p -> paths.match(p, path))) {
+            metrics.payloadAccessDenied();
+        }
         write(request, response, HttpStatus.FORBIDDEN, "forbidden", "Your roles do not allow this request.");
     }
 
