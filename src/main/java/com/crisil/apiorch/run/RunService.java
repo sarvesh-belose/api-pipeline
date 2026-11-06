@@ -50,14 +50,16 @@ public class RunService {
     private final RunCoordinator coordinator;
     private final CallerExchangeLog exchanges;
     private final IdempotencyService idempotency;
+    private final AdmissionControl admission;
     private final TransactionTemplate tx;
     private final ApiorchProperties.Run settings;
     private volatile boolean draining;
 
     public RunService(PublishedPipelines pipelines, InputValidator inputValidator, RunCompletionNotifier notifier,
             RunRows rows, JdbcRunLeaseService leases, ActivityRecorder recorder, RunCoordinator coordinator,
-            CallerExchangeLog exchanges, IdempotencyService idempotency, TransactionTemplate tx,
-            ApiorchProperties properties) {
+            CallerExchangeLog exchanges, IdempotencyService idempotency, AdmissionControl admission,
+            TransactionTemplate tx, ApiorchProperties properties) {
+        this.admission = admission;
         this.pipelines = pipelines;
         this.inputValidator = inputValidator;
         this.notifier = notifier;
@@ -90,6 +92,10 @@ public class RunService {
             }
         }
         int version = resolveVersion(code, requestedVersion, caller);
+        // US-5.4: new runs only, after the replay lookup (AC7); recovered runs are never refused
+        admission.admitNew();
+        boolean created = false;
+        try {
         CompiledPipeline pipeline = pipelines.compiled(code, version);
         inputValidator.check(pipeline, input);
 
@@ -122,6 +128,7 @@ public class RunService {
             notifier.cancel(runId);
             throw e;
         }
+        created = true;
         log.info("run accepted runId={} pipeline={} version={} mode={}", runId, code, version, mode);
         Lease lease = new Lease(runId, leases.instanceId(), 1);
         try {
@@ -131,6 +138,11 @@ public class RunService {
             leases.release(lease, true);
         }
         return new Started(runId, version, done, false);
+        } finally {
+            if (!created) {
+                admission.cancelNew();
+            }
+        }
     }
 
     /**

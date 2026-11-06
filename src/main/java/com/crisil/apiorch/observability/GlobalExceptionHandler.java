@@ -40,7 +40,9 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
             problem.setProperty("errors", vf.errors());
         }
         ex.properties().forEach(problem::setProperty);
-        return respond(problem, new HttpHeaders(), request);
+        HttpHeaders headers = new HttpHeaders();
+        ex.headers().forEach(headers::set);
+        return respond(problem, headers, request);
     }
 
     @ExceptionHandler(PayloadTooLargeException.class)

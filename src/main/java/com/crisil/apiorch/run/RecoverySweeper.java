@@ -33,9 +33,11 @@ public class RecoverySweeper {
     private final RunRows rows;
     private final ApiorchMetrics metrics;
     private final JdbcClient jdbc;
+    private final AdmissionControl admission;
 
     public RecoverySweeper(RunLeaseService leases, RunCoordinator coordinator, RunRows rows, ApiorchMetrics metrics,
-            JdbcClient jdbc) {
+            JdbcClient jdbc, AdmissionControl admission) {
+        this.admission = admission;
         this.leases = leases;
         this.coordinator = coordinator;
         this.rows = rows;
@@ -64,6 +66,7 @@ public class RecoverySweeper {
         try {
             Set<UUID> owned = leases.renewAll();
             metrics.runsDriven(owned.size());
+            admission.reconcile(owned.size());
             log.debug("leases renewed owned={}", owned.size());
         } catch (RuntimeException e) {
             log.warn("lease renewal failed: {}", e.getClass().getSimpleName());
@@ -83,6 +86,7 @@ public class RecoverySweeper {
                 if (lease.isEmpty()) {
                     continue; // another node won the claim (AC4)
                 }
+                admission.claimed();
                 log.warn("run recovered runId={} previousOwner={} epoch={}", runId, previousOwner, lease.get().epoch());
                 coordinator.recover(lease.get(), previousOwner);
             }
