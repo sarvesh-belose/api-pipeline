@@ -21,6 +21,8 @@ import org.springframework.http.HttpMethod;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
@@ -50,6 +52,7 @@ public class HttpStepExecutor implements StepExecutor {
     /** An attempt with this little budget left is not started (US-5.1). */
     static final long MIN_BUDGET_MS = 100;
     public static final String DEADLINE_EXCEEDED = "DEADLINE_EXCEEDED";
+    public static final String CIRCUIT_OPEN = "CIRCUIT_OPEN";
 
     private final EndpointClientRegistry endpoints;
     private final ExpressionEvaluator evaluator;
@@ -108,7 +111,18 @@ public class HttpStepExecutor implements StepExecutor {
         }
 
         int attemptNo = invocation.attemptNo();
-        long seq = attempts.requestSent(invocation, attemptNo, request.method());
+        CircuitBreaker circuit = runtime.get().circuitBreaker();
+        String circuitState = circuit.getState().name();
+        if (!circuit.tryAcquirePermission()) {
+            return rejected(invocation, endpointName, request, attemptNo);
+        }
+        long seq;
+        try {
+            seq = attempts.requestSent(invocation, attemptNo, request.method());
+        } catch (RuntimeException e) {
+            circuit.releasePermission();
+            throw e;
+        }
         Instant startedAt = Instant.now(clock);
         log.info("step started method={} url={}", request.method(), masked(request.uri()));
         Call call = send(runtime.get().restClient(attemptTimeout), request);
@@ -160,6 +174,7 @@ public class HttpStepExecutor implements StepExecutor {
                 }
             }
         }
+        report(circuit, outcome, result.httpStatus(), durationMs);
         log.info("step finished status={} httpStatus={} durationMs={} requestBytes={} responseBytes={}",
                 result.status(), result.httpStatus(), durationMs,
                 exchange != null ? exchange.requestBytes() : 0, exchange != null ? exchange.responseBytes() : 0);
@@ -173,10 +188,48 @@ public class HttpStepExecutor implements StepExecutor {
                 exchange != null ? exchange.responseHeaders() : Map.of(),
                 exchange != null ? exchange.responseBody() : null,
                 exchange != null ? exchange.responseBytes() : 0,
-                outcome, errorClass, errorMessage, "CLOSED", null, startedAt, startedAt.plusMillis(durationMs),
+                outcome, errorClass, errorMessage, circuitState, null, startedAt, startedAt.plusMillis(durationMs),
                 durationMs);
         boolean responded = exchange != null && exchange.status() != null;
         return result.withTrail(List.of(new StepAttempt(record, responded, call.refreshes())));
+    }
+
+    /**
+     * US-5.3: the circuit is open, so nothing is sent and nothing waits. The attempt is still recorded (method, URL,
+     * {@code duration_ms = 0}, {@code circuit_state = OPEN}); the coordinator gives it the {@code seq} of
+     * {@code CIRCUIT_OPEN_REJECTED}. {@code CIRCUIT_OPEN} is never retried, so the step's policy applies at once.
+     */
+    private StepOutcome rejected(StepInvocation invocation, String endpointName, RequestBuilder.StepRequest request,
+            int attemptNo) {
+        Instant now = Instant.now(clock);
+        String message = "Circuit open for endpoint '" + endpointName + "'";
+        log.warn("attempt rejected endpoint={} outcome={}", endpointName, CIRCUIT_OPEN);
+        AttemptRecord record = new AttemptRecord(invocation.runId(), invocation.step().id(), invocation.execNo(),
+                attemptNo, "REQUEST", 0, endpointName, request.method(), request.uri().toString(), request.headers(),
+                null, 0, null, Map.of(), null, 0, CIRCUIT_OPEN, null, message, "OPEN", null, now, now, 0);
+        return StepOutcome.failed(null, CIRCUIT_OPEN, message, 1, 0)
+                .withTrail(List.of(new StepAttempt(record, false, List.of())));
+    }
+
+    /**
+     * What this attempt tells the circuit: connect, IO and timeout failures, 5xx and 429 count as failures; a
+     * deadline cut or an auth failure says nothing about the endpoint and is not counted; anything else, other 4xx
+     * included, is a success (slow ones count towards the slow-call rate).
+     */
+    static void report(CircuitBreaker circuit, String outcome, Integer httpStatus, long durationMs) {
+        boolean failure = switch (outcome) {
+            case "CONNECT_ERROR", "IO_ERROR", "TIMEOUT" -> true;
+            case "HTTP_ERROR" -> httpStatus != null && (httpStatus >= 500 || httpStatus == 429);
+            default -> false;
+        };
+        if (failure) {
+            circuit.onError(durationMs, java.util.concurrent.TimeUnit.MILLISECONDS,
+                    new IllegalStateException(outcome + (httpStatus != null ? " " + httpStatus : "")));
+        } else if (outcome.equals(DEADLINE_EXCEEDED) || outcome.equals("AUTH_ERROR")) {
+            circuit.releasePermission();
+        } else {
+            circuit.onSuccess(durationMs, java.util.concurrent.TimeUnit.MILLISECONDS);
+        }
     }
 
     private Map<String, String> fixedHeaders(StepInvocation invocation) {

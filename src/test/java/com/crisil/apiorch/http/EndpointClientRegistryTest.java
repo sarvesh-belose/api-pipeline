@@ -33,7 +33,7 @@ class EndpointClientRegistryTest {
     private final EndpointMapper mapper = new EndpointMapper(new ObjectMapper(), properties);
     private final EndpointClientRegistry registry = new EndpointClientRegistry(repository, mapper, RestClient.builder(),
             mock(com.crisil.apiorch.http.auth.SecretResolver.class), mock(com.crisil.apiorch.http.auth.OAuth2TokenCache.class),
-            properties);
+            properties, java.time.Clock.systemUTC(), new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
     private final List<NameAndVersion> versions = new ArrayList<>();
 
     private EndpointEntity entity(String name, String baseUrl, String httpVersion) {

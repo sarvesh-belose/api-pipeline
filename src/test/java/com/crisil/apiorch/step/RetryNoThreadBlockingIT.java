@@ -45,7 +45,12 @@ class RetryNoThreadBlockingIT {
         api.stubFor(any(urlPathEqualTo("/flaky")).willReturn(aResponse().withStatus(503)));
         api.stubFor(any(urlPathEqualTo("/ok")).willReturn(aResponse().withStatus(200)));
         Http http = new Http(port);
-        String endpoint = HttpPipelines.endpoint(http, "http://localhost:" + api.getPort());
+        // a wide circuit window: 20 failing runs on one endpoint would otherwise open it (US-5.3) and stop the retries
+        String endpoint = "backoff-" + java.util.UUID.randomUUID().toString().substring(0, 8);
+        assertThat(http.postJson("/api/v1/admin/endpoints", """
+                {"name":"%s","baseUrl":"http://localhost:%d","connectTimeoutMs":2000,"readTimeoutMs":5000,
+                 "resilience":{"circuitBreaker":{"slidingWindowSize":1000,"minimumCalls":1000}}}"""
+                .formatted(endpoint, api.getPort())).statusCode()).isEqualTo(201);
 
         String flaky = PublishedFixtures.uniqueCode("BACKOFF");
         ObjectNode doc = HttpPipelines.pipeline(flaky);

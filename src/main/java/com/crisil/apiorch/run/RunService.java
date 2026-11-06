@@ -52,6 +52,7 @@ public class RunService {
     private final IdempotencyService idempotency;
     private final TransactionTemplate tx;
     private final ApiorchProperties.Run settings;
+    private volatile boolean draining;
 
     public RunService(PublishedPipelines pipelines, InputValidator inputValidator, RunCompletionNotifier notifier,
             RunRows rows, JdbcRunLeaseService leases, ActivityRecorder recorder, RunCoordinator coordinator,
@@ -76,6 +77,10 @@ public class RunService {
 
     public Started start(String code, Integer requestedVersion, JsonNode input, boolean sync, String correlationId,
             Inbound inbound, String idempotencyKey, Authentication caller) {
+        if (draining) {
+            throw new ApiProblemException(HttpStatus.SERVICE_UNAVAILABLE, "shutting-down",
+                    "This node is shutting down; retry on another node.");
+        }
         String key = IdempotencyService.validate(idempotencyKey);
         String hash = key == null ? null : IdempotencyService.hash(input);
         if (key != null) {
@@ -143,6 +148,11 @@ public class RunService {
             notifier.notifyDone(runId);
         }
         return new Started(runId, existing.version(), done, true);
+    }
+
+    /** Graceful shutdown has begun: new runs get {@code 503 shutting-down} (US-5.5 AC7). */
+    public void drain() {
+        draining = true;
     }
 
     private int resolveVersion(String code, Integer requested, Authentication caller) {

@@ -8,23 +8,32 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+
 import com.crisil.apiorch.endpoint.EndpointConfig;
 
 /**
  * Everything needed to call one endpoint, built from its {@link EndpointConfig} (US-2.1): a {@link RestClient}
- * cloned from the shared builder so interceptors never leak between endpoints, and its JDK {@link HttpClient}.
- * {@link #restClient(long)} gives a client per timeout bucket (US-5.1); US-5.2 to US-5.4 add the Resilience4j
- * instances. Replaced whole on every change; JDK 17's {@code HttpClient} has no {@code close()}, so a replaced runtime
- * is simply dropped.
+ * cloned from the shared builder so interceptors never leak between endpoints, its JDK {@link HttpClient}, this
+ * node's {@link CircuitBreaker} (US-5.3), and a client per timeout bucket (US-5.1). Replaced whole on every change,
+ * so a changed endpoint starts with a closed circuit and its new thresholds; JDK 17's {@code HttpClient} has no
+ * {@code close()}, so a replaced runtime is simply dropped.
  */
 public record EndpointRuntime(EndpointConfig config, RestClient restClient, HttpClient httpClient,
-        Map<Long, RestClient> buckets) {
+        CircuitBreaker circuitBreaker, Map<Long, RestClient> buckets) {
 
     static final long BUCKET_MS = 250;
     static final long MAX_BUCKET_MS = 120_000;
 
+    public EndpointRuntime(EndpointConfig config, RestClient restClient, HttpClient httpClient,
+            CircuitBreaker circuitBreaker) {
+        this(config, restClient, httpClient, circuitBreaker, new ConcurrentHashMap<>());
+    }
+
+    /** With a default circuit breaker, for tests that only need the clients. */
     public EndpointRuntime(EndpointConfig config, RestClient restClient, HttpClient httpClient) {
-        this(config, restClient, httpClient, new ConcurrentHashMap<>());
+        this(config, restClient, httpClient,
+                CircuitBreaker.ofDefaults(config != null ? config.name() : "unnamed"));
     }
 
     public String name() {

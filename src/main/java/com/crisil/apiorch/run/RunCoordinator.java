@@ -71,7 +71,6 @@ public class RunCoordinator {
     static final String STEP_FAILED = "STEP_FAILED";
     static final String DEADLINE = "DEADLINE";
     static final String STEP_OUTCOME_UNKNOWN = "STEP_OUTCOME_UNKNOWN";
-    static final int LOCK_RETRIES = 5;
     static final String RUN_TIMEOUT = "RUN_TIMEOUT";
     static final String OUTPUT_EXPRESSION_ERROR = "OUTPUT_EXPRESSION_ERROR";
 
@@ -94,6 +93,8 @@ public class RunCoordinator {
     private final Clock clock;
     private final long defaultRunTimeoutMs;
     private final int maxParallelSteps;
+    private final java.util.concurrent.atomic.AtomicInteger inFlightTasks = new java.util.concurrent.atomic.AtomicInteger();
+    private volatile boolean draining;
 
     public RunCoordinator(TransactionTemplate tx, RunRows rows, RunLeaseService leases, ActivityRecorder recorder,
             PublishedPipelines pipelines, StepExecutor executor,
@@ -161,7 +162,7 @@ public class RunCoordinator {
             return;
         }
         for (StepInvocation invocation : scheduled) {
-            stepIo.execute(() -> run(invocation));
+            submit(() -> run(invocation));
         }
     }
 
@@ -211,9 +212,10 @@ public class RunCoordinator {
             finish(run, pipeline, status, steps.size());
             return List.of();
         }
-        // AC4: at most max-parallel-steps in flight; each completion advances and submits the next
+        // AC4: at most max-parallel-steps in flight; each completion advances and submits the next. A draining node
+        // starts nothing new (US-5.5 AC7): the run is released and another node continues it.
         long inFlight = steps.stream().filter(st -> st.status() == StepStatus.RUNNING).count();
-        List<CompiledStep> ready = next.ready().stream()
+        List<CompiledStep> ready = draining ? List.of() : next.ready().stream()
                 .limit(Math.max(0, maxParallelSteps - inFlight)).toList();
         log.debug("ready set computed ready={} skipped={} inFlight={}", next.ready().stream().map(CompiledStep::id)
                 .toList(), next.skip().stream().map(RunDecision.Skip::stepId).toList(), inFlight);
@@ -247,6 +249,10 @@ public class RunCoordinator {
                 log.warn("lease lost runId={} epoch={}; {} not sent", invocation.runId(), invocation.lease().epoch(),
                         invocation.step().id());
                 metrics.leaseLost();
+                return;
+            } catch (org.springframework.dao.DataAccessException e) {
+                // REQUEST_SENT could not be recorded, so nothing was sent; recovery decides (US-5.5)
+                releaseForRecovery(invocation.lease(), "recording the request of " + invocation.step().id(), e);
                 return;
             } catch (RuntimeException e) {
                 log.error("step executor failed unexpectedly", e);
@@ -315,12 +321,16 @@ public class RunCoordinator {
         log.warn("attempt failed attempt={} outcome={} httpStatus={}", invocation.attemptNo(), outcome.errorCode(),
                 outcome.httpStatus());
         log.info("retry scheduled attempt={} delayMs={} reason={}", invocation.attemptNo() + 1, delay, reason);
-        retries.schedule(delay, () -> stepIo.execute(() -> runRetry(invocation, outcome)));
+        retries.schedule(delay, () -> submit(() -> runRetry(invocation, outcome)));
         return true;
     }
 
     /** A retry that comes due after the run stopped is not sent; the last failure is the step's outcome. */
     private void runRetry(StepInvocation previous, StepOutcome lastFailure) {
+        if (draining) {
+            // the step stays RUNNING; after the release, recovery applies the idempotency rule (US-5.5)
+            return;
+        }
         boolean stopped;
         try {
             stopped = Boolean.TRUE.equals(inTx(s -> {
@@ -457,6 +467,10 @@ public class RunCoordinator {
         for (StepAttempt attempt : outcome.trail()) {
             AttemptRecord a = attempt.record();
             StepRef ref = StepRef.attempt(a.stepId(), a.execNo(), a.attemptNo());
+            if (HttpStepExecutor.CIRCUIT_OPEN.equals(a.outcome())) {
+                a = a.withEventSeq(recorder.record(a.runId(), EventType.CIRCUIT_OPEN_REJECTED, ref,
+                        Map.of("endpoint", a.endpointName()), null));
+            }
             for (String endpoint : attempt.tokenRefreshes()) {
                 recorder.record(a.runId(), EventType.TOKEN_REFRESHED, ref, Map.of("endpoint", endpoint), null);
             }
@@ -506,6 +520,7 @@ public class RunCoordinator {
                 if (run.status().terminal()) {
                     return null;
                 }
+                metrics.runRecovered();
                 recorder.record(run.id(), EventType.RUN_RECOVERED, null, details("previousOwner", previousOwner,
                         "newOwner", lease.owner(), "epoch", lease.epoch()), null);
                 CompiledPipeline pipeline = pipelines.compiled(run.pipelineCode(), run.pipelineVersion());
@@ -542,6 +557,7 @@ public class RunCoordinator {
                                 "Step " + st.stepId() + " may have run; resolve it before resuming", st.stepId());
                         log.error("step outcome unknown – manual resolution required runId={} stepId={}", run.id(),
                                 st.stepId());
+                        metrics.stepUnknown();
                     }
                 }
                 return left;
@@ -681,27 +697,52 @@ public class RunCoordinator {
         return view;
     }
 
+    /** Every step task goes through here, so shutdown can wait for the ones in flight (US-5.5 AC7). */
+    private void submit(Runnable task) {
+        inFlightTasks.incrementAndGet();
+        try {
+            stepIo.execute(() -> {
+                try {
+                    task.run();
+                } finally {
+                    inFlightTasks.decrementAndGet();
+                }
+            });
+        } catch (RuntimeException e) {
+            inFlightTasks.decrementAndGet();
+            throw e;
+        }
+    }
+
+    /** Shutdown has begun: no new steps or retries start here (US-5.5 AC7). */
+    public void drain() {
+        draining = true;
+    }
+
+    public boolean draining() {
+        return draining;
+    }
+
+    /** Waits up to {@code grace} for the step tasks in flight to finish and record; {@code true} if they all did. */
+    public boolean awaitIdle(java.time.Duration grace) {
+        long until = System.nanoTime() + grace.toNanos();
+        while (inFlightTasks.get() > 0 && System.nanoTime() < until) {
+            try {
+                Thread.sleep(50);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+        return inFlightTasks.get() == 0;
+    }
+
     /**
      * One coordinator transaction, run again when SQL Server picks it as a deadlock victim or a lock wait times out.
      * The transaction rolled back whole, so it is safe to repeat; it still starts with the fenced lock.
      */
     private <T> T inTx(org.springframework.transaction.support.TransactionCallback<T> work) {
-        for (int attempt = 1; ; attempt++) {
-            try {
-                return tx.execute(work);
-            } catch (org.springframework.dao.PessimisticLockingFailureException e) {
-                if (attempt >= LOCK_RETRIES) {
-                    throw e;
-                }
-                log.warn("transaction retried after {} attempt={}", e.getClass().getSimpleName(), attempt);
-                try {
-                    Thread.sleep(20L * attempt);
-                } catch (InterruptedException interrupted) {
-                    Thread.currentThread().interrupt();
-                    throw e;
-                }
-            }
-        }
+        return com.crisil.apiorch.persistence.LockRetry.run(() -> tx.execute(work));
     }
 
     /** A transaction that keeps failing never strands a run: release it with a wake-up for recovery (US-5.5). */

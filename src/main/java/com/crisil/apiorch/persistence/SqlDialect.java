@@ -76,6 +76,17 @@ public class SqlDialect {
         return db() == Db.SQLSERVER ? "SET LOCK_TIMEOUT " + millis + "; " + sql : sql;
     }
 
+    /**
+     * A predicate that limits a read to the monthly partitions between {@code :from} and {@code :to} of
+     * {@code column} (README §10, ADR-003 F9). SQL Server does not derive the partition range from a range on
+     * {@code column} when the index it seeks does not lead with it, so it is spelled out with {@code $PARTITION};
+     * H2 has no partitions, so it is empty there.
+     */
+    public String partitionRange(String column) {
+        return db() == Db.SQLSERVER ? " AND $PARTITION.pf_month(" + column + ") BETWEEN $PARTITION.pf_month(:from)"
+                + " AND $PARTITION.pf_month(:to)" : "";
+    }
+
     /** The per-session lock wait for H2; empty on SQL Server, which uses {@link #withLockTimeout}. */
     public Optional<String> sessionLockTimeoutSql(long millis) {
         return db() == Db.H2 ? Optional.of("SET LOCK_TIMEOUT " + millis) : Optional.empty();

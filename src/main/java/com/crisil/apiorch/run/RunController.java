@@ -36,6 +36,7 @@ import com.crisil.apiorch.observability.CorrelationIdFilter;
 import com.crisil.apiorch.observability.ProblemTypes;
 import com.crisil.apiorch.run.dto.ExchangeView;
 import com.crisil.apiorch.run.dto.RunResource;
+import com.crisil.apiorch.run.dto.Timeline;
 
 /**
  * {@code POST /api/v1/pipelines/{code}/runs} (US-4.1 sync, US-4.2 async) and {@code GET /api/v1/runs/{runId}}. Sync
@@ -54,14 +55,17 @@ public class RunController {
     private final RunQueryService queries;
     private final RunResourceAssembler assembler;
     private final CallerExchangeLog exchanges;
+    private final TimelineService timelines;
     private final ThreadPoolTaskExecutor responses;
 
     public RunController(RunService runs, RunQueryService queries, RunResourceAssembler assembler,
-            CallerExchangeLog exchanges, @Qualifier(ExecutorConfig.RUN_RESPONSE) ThreadPoolTaskExecutor responses) {
+            CallerExchangeLog exchanges, TimelineService timelines,
+            @Qualifier(ExecutorConfig.RUN_RESPONSE) ThreadPoolTaskExecutor responses) {
         this.runs = runs;
         this.queries = queries;
         this.assembler = assembler;
         this.exchanges = exchanges;
+        this.timelines = timelines;
         this.responses = responses;
     }
 
@@ -105,10 +109,39 @@ public class RunController {
                 () -> respond(started.runId(), waitStart, replayed), replayed), responses);
     }
 
-    /** US-7.7: the caller's exchange rows, oldest first ({@code apiorch.ops}). */
+    /** US-7.7: the caller's exchange rows, oldest first ({@code apiorch.ops}); the read is recorded (US-7.4). */
     @GetMapping("/api/v1/runs/{runId}/exchanges/{kind}")
-    public List<ExchangeView> exchanges(@PathVariable String runId, @PathVariable String kind) {
-        return queries.exchanges(runId, kind);
+    public List<ExchangeView> exchanges(@PathVariable String runId, @PathVariable String kind, Authentication caller) {
+        List<ExchangeView> rows = queries.exchanges(runId, kind);
+        timelines.recordAccess(UUID.fromString(runId), kind, null, null, null, caller);
+        return rows;
+    }
+
+    /** US-7.4: the run's calls in order, without bodies; the creator or {@code apiorch.ops}. */
+    @GetMapping("/api/v1/runs/{runId}/timeline")
+    public Timeline timeline(@PathVariable String runId, @RequestParam(name = "include", required = false) String include,
+            Authentication caller) {
+        return timelines.timeline(runId, "events".equals(include), caller);
+    }
+
+    /** US-7.4 AC4: one attempt's masked headers and bodies ({@code apiorch.ops}). */
+    @GetMapping("/api/v1/runs/{runId}/steps/{stepId}/attempts/{n}")
+    public Timeline.AttemptDetail attempt(@PathVariable String runId, @PathVariable String stepId, @PathVariable int n,
+            @RequestParam(name = "kind", defaultValue = "REQUEST") String kind, Authentication caller) {
+        return timelines.attempt(runId, stepId, n, kind, caller);
+    }
+
+    /** US-7.4 AC6, AC7: search, newest first. */
+    @GetMapping("/api/v1/runs")
+    public Timeline.Page search(@RequestParam(name = "pipeline", required = false) String pipeline,
+            @RequestParam(name = "status", required = false) List<String> status,
+            @RequestParam(name = "from", required = false) java.time.Instant from,
+            @RequestParam(name = "to", required = false) java.time.Instant to,
+            @RequestParam(name = "correlationId", required = false) String correlationId,
+            @RequestParam(name = "createdBy", required = false) String createdBy,
+            @RequestParam(name = "page", defaultValue = "0") int page,
+            @RequestParam(name = "size", defaultValue = "20") int size, Authentication caller) {
+        return timelines.search(pipeline, status, from, to, correlationId, createdBy, page, size, caller);
     }
 
     /** US-4.2: the caller's own run, or any run for {@code apiorch.ops}; polled until done. */
