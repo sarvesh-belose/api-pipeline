@@ -36,6 +36,13 @@ public record AttemptRecord(
         Instant endedAt,
         long durationMs) {
 
+    /** The same attempt with its event's {@code seq}, for a rejection recorded by the coordinator (US-5.3). */
+    public AttemptRecord withEventSeq(long seq) {
+        return new AttemptRecord(runId, stepId, execNo, attemptNo, kind, seq, endpointName, method, url,
+                requestHeaders, requestBody, requestBytes, responseStatus, responseHeaders, responseBody, responseBytes,
+                outcome, errorClass, errorMessage, circuitState, nextRetryDelayMs, startedAt, endedAt, durationMs);
+    }
+
     /** The same attempt, with the delay before the retry it led to (US-5.2). */
     public AttemptRecord withNextRetryDelay(long delayMs) {
         return new AttemptRecord(runId, stepId, execNo, attemptNo, kind, eventSeq, endpointName, method, url,

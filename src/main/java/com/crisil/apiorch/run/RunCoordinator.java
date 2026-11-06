@@ -457,6 +457,10 @@ public class RunCoordinator {
         for (StepAttempt attempt : outcome.trail()) {
             AttemptRecord a = attempt.record();
             StepRef ref = StepRef.attempt(a.stepId(), a.execNo(), a.attemptNo());
+            if (HttpStepExecutor.CIRCUIT_OPEN.equals(a.outcome())) {
+                a = a.withEventSeq(recorder.record(a.runId(), EventType.CIRCUIT_OPEN_REJECTED, ref,
+                        Map.of("endpoint", a.endpointName()), null));
+            }
             for (String endpoint : attempt.tokenRefreshes()) {
                 recorder.record(a.runId(), EventType.TOKEN_REFRESHED, ref, Map.of("endpoint", endpoint), null);
             }
