@@ -16,3 +16,6 @@ apiorch:
     mode: dev
   run:
     allow-version-override: true
+  # US-8.1: the demo endpoints (WireMock on :8089, `docker compose up -d wiremock`) and DEMO_ONBOARD v1
+  seed:
+    enabled: true

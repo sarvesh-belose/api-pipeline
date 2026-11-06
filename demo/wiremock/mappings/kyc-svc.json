@@ -1,0 +1,76 @@
+{
+  "mappings": [
+    {
+      "scenarioName": "kyc",
+      "requiredScenarioState": "Started",
+      "request": {
+        "method": "POST",
+        "urlPath": "/kyc"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "ref": "KYC-1",
+          "status": "VERIFIED"
+        }
+      }
+    },
+    {
+      "scenarioName": "kyc",
+      "requiredScenarioState": "flaky",
+      "newScenarioState": "flaky-2",
+      "request": {
+        "method": "POST",
+        "urlPath": "/kyc"
+      },
+      "response": {
+        "status": 503
+      }
+    },
+    {
+      "scenarioName": "kyc",
+      "requiredScenarioState": "flaky-2",
+      "newScenarioState": "flaky-3",
+      "request": {
+        "method": "POST",
+        "urlPath": "/kyc"
+      },
+      "response": {
+        "status": 503
+      }
+    },
+    {
+      "scenarioName": "kyc",
+      "requiredScenarioState": "flaky-3",
+      "newScenarioState": "Started",
+      "request": {
+        "method": "POST",
+        "urlPath": "/kyc"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "ref": "KYC-1",
+          "status": "VERIFIED"
+        }
+      }
+    },
+    {
+      "scenarioName": "kyc",
+      "requiredScenarioState": "down",
+      "request": {
+        "method": "POST",
+        "urlPath": "/kyc"
+      },
+      "response": {
+        "status": 503
+      }
+    }
+  ]
+}

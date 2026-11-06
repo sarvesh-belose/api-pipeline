@@ -1,0 +1,12 @@
+[
+  {"name": "customer-svc", "description": "Customer master (demo stub)", "baseUrl": "http://localhost:8089",
+   "connectTimeoutMs": 2000, "readTimeoutMs": 5000},
+  {"name": "kyc-svc", "description": "KYC verification (demo stub: normal, flaky, down)", "baseUrl": "http://localhost:8089",
+   "connectTimeoutMs": 2000, "readTimeoutMs": 5000,
+   "resilience": {"circuitBreaker": {"slidingWindowSize": 5, "minimumCalls": 5, "failureRateThreshold": 50,
+                                     "waitInOpenMs": 30000, "halfOpenCalls": 2}}},
+  {"name": "score-svc", "description": "Credit score (demo stub)", "baseUrl": "http://localhost:8089",
+   "connectTimeoutMs": 2000, "readTimeoutMs": 5000},
+  {"name": "notify-svc", "description": "Welcome notification (demo stub)", "baseUrl": "http://localhost:8089",
+   "connectTimeoutMs": 2000, "readTimeoutMs": 5000}
+]
