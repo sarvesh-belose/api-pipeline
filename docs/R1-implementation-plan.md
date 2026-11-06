@@ -308,7 +308,7 @@ controller before closing the context, instead of a fixed 400 ms sleep that a lo
 `RetryNoThreadBlockingIT` gives its endpoint a wide circuit window, because 20 failing runs would otherwise open the
 circuit (US-5.3) and stop the retries it counts.
 
-**Sprint 6 status (2026-11-06): in progress** on `sprint6/*` branches; both tiers green (`verify -Pslow`, 485 tests; perf smoke separately).
+**Sprint 6 status (2026-11-06): done**, merged into `main` (`3ecb87c`); both tiers green (`verify -Pslow`, 485 tests; perf smoke separately). The R1 exit checks that followed are in the note below.
 
 | Planned | Delivered | Left for later sprints |
 |---|---|---|
@@ -323,6 +323,19 @@ as described. It exposed a real defect: in dev security mode a sync run was exec
 response is written on an async dispatch (US-4.1), which `OncePerRequestFilter` skips by default, so the dev filter
 never set `dev-user` there; JWT mode was unaffected, which is why the build (all JWT) missed it.
 `DevUserFilter` now runs on async dispatches too, and `LocalDevModeIT` covers a sync run.
+
+**Note (R1 exit checks, 2026-11-06):** the security review was held (decisions in the pack). The demo was run live
+through Compose and `walkthrough.ps1`, and the US-1.4 checklist in a local simulation (two nodes on SQL Server
+behind nginx, `tools/lb-sim`). They found three defects, now fixed:
+- **run `Location` was relative** (`/api/v1/runs/{id}`): `ForwardedHeadersIT` had used a test endpoint, so the real
+  run endpoint was never checked. `RunController` now builds it from the request's public address;
+- **`docker compose up -d wiremock` failed**, because Compose interpolates the whole file and the optional
+  `mssql` service required `MSSQL_SA_PASSWORD`;
+- **`walkthrough.ps1` failed on a second run** (`428` on the draft PUT without `If-Match`, and KYC left down). It
+  now sends the draft's ETag and resets KYC and its circuit first.
+
+What remains for the R1 exit is rerunning the checklist against the R1 environment's load balancer once it exists,
+with its values in the deployment guide.
 
 **Note (perf smoke):** the first 60 s run lost 50 of 1 200 runs to `BULKHEAD_FULL`: all three steps call one
 endpoint, so 20 runs/s is 60 calls/s against the default bulkhead of 25, and on a loaded machine calls overlapped
@@ -378,9 +391,9 @@ planned classes whose cases ended up in others).
 | Metrics | `MetricsIT`, `ResilienceMetricsIT`, `MetricCardinalityTest` (US-7.5) | green |
 | Encrypted working data | `EncryptedContextIT` reads the raw column (US-7.6) | green |
 | No-redeploy reorder and rollback | `ReorderNoRedeployIT`, `InFlightPinningIT` (US-3.3); `RollbackIT` (US-3.4); `DemoWalkthroughIT` | green |
-| Reachable on a stable public address | `ForwardedHeadersIT`, `PublicBaseUrlGuardTest`, `ApplicationSmokeIT` (management port) (US-1.4), plus the manual checklist against the R1 environment's load balancer | automated part green; the load-balancer checklist needs the R1 environment |
-| Runnable reorder demo | US-8.1 slice A: `demo/README.md`, `demo/walkthrough.ps1`, and `DemoWalkthroughIT` over the same WireMock mappings | green in the build; to be run live at the S6 review |
-| R1 security review | [`R1-security-review.md`](R1-security-review.md) | pack ready; review not yet held |
+| Reachable on a stable public address | `ForwardedHeadersIT` (now including the real run endpoint), `PublicBaseUrlGuardTest`, `ApplicationSmokeIT` (management port) (US-1.4); the load-balancer checklist in [`deployment-guide.md`](deployment-guide.md) | green, and the checklist passed in a local two-node nginx simulation; to be rerun against the R1 environment's load balancer once it exists |
+| Runnable reorder demo | US-8.1 slice A: `demo/README.md`, `demo/walkthrough.ps1`, and `DemoWalkthroughIT` over the same WireMock mappings | green in the build, and run live through Compose and the script (2026-11-06) |
+| R1 security review | [`R1-security-review.md`](R1-security-review.md) | held 2026-11-06; R1 may exit on security, decisions in §7 of the pack |
 
 **Also in Sprint 6, but not exit gates:**
 - **Perf smoke:** 20 runs/s for 10 minutes on one node, to catch gross regressions: `PerfSmokeIT`,

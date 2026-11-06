@@ -13,6 +13,7 @@ GET {{app}}/api/v1/runs/{{runId}}/timeline?include=events
 
 ### 3a. Reorder: save v2 as the draft. Paste the content of
 ###     src/main/resources/seed/DEMO_ONBOARD.v2-reordered.json as "definition".
+###     If a draft already exists, add "If-Match: <its ETag>" (GET …/draft returns it), or the PUT is 428.
 PUT {{app}}/api/v1/admin/pipelines/DEMO_ONBOARD/draft
 Content-Type: application/json
 

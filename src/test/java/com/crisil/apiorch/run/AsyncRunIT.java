@@ -80,7 +80,8 @@ class AsyncRunIT {
         assertThat(res.statusCode()).as(res.body()).isEqualTo(202);
         JsonNode accepted = body(res);
         String runId = accepted.path("runId").asText();
-        assertThat(res.headers().firstValue("Location")).hasValue("/api/v1/runs/" + runId);
+        // absolute, from the address the caller used (US-1.4 AC2)
+        assertThat(res.headers().firstValue("Location")).hasValue("http://localhost:" + port + "/api/v1/runs/" + runId);
         assertThat(accepted.path("status").asText()).isEqualTo("ACCEPTED");
         assertThat(accepted.path("pipeline").asText()).isEqualTo(code);
         assertThat(accepted.path("version").asInt()).isEqualTo(1);

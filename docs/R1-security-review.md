@@ -5,8 +5,7 @@ The R1 security review is the end-of-Sprint 6 checkpoint in the
 confined, masking, encryption, and the append-only grants. This pack gathers the design, the code and the
 automated evidence for each area, and lists the open points the reviewer must decide on.
 
-**Status (2026-11-06):** prepared for review. The review itself has not been held; record its outcome and any
-findings at the end of this file.
+**Status (2026-11-06):** reviewed. The decisions on the open points are in §7.
 
 Every test named here runs in `./mvnw verify` (H2) or `./mvnw verify -Pslow` (SQL Server 2022), and both tiers
 are green on the Sprint 6 branch.
@@ -78,4 +77,14 @@ are green on the Sprint 6 branch.
 
 ## 7. Outcome
 
-_To be filled in at the review: date, attendees, decisions on §6, findings and their owners._
+**Date:** 2026-11-06. **Reviewer:** Sarvesh Belose (product owner; every R1 role). **Result:** R1 may exit on
+security, with the decisions below. No finding blocks the release.
+
+| # | Point | Decision | Follow-up |
+|---|---|---|---|
+| 1 | Raw values (Q7) | **Accepted for R1.** No API serves unmasked data; an investigation that needs a raw value is a direct, access-controlled database query, and that risk is accepted. | If the need proves real in operation, raise a story for an audited `apiorch.ops` endpoint with its own `PAYLOAD_ACCESSED` event (R2 or later). |
+| 2 | Circuit resets logged, not stored | **The WARN line (actor, reason) is enough for R1.** | Stored as an `endpoint_audit` row with US-2.3 (R2). |
+| 3 | Downstream hosts | **Set per environment at deployment.** `allowed-hosts` stays empty in `prod`, which allows no host (deny by default, `HostPolicy`); each environment's list is recorded in the deployment guide. | [`deployment-guide.md`](deployment-guide.md) |
+| 4 | Callback signing keys | **Accepted.** Nothing accepts callbacks in R1. | US-6.1 (R2). |
+| 5 | Boot 3.5 support | **Accepted** as risk R1, on the support path in ADR-003. | Tracked in the plan's risk table. |
+| 6 | `READ_COMMITTED_SNAPSHOT` in production | **Accepted** as a handover item; the engine already retries transactions that lose to lock contention. | US-8.5 (R2). |

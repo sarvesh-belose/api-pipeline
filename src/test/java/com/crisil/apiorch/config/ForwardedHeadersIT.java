@@ -9,10 +9,17 @@ import java.net.http.HttpResponse;
 
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.context.ActiveProfiles;
+
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
+import testsupport.engine.PublishedFixtures;
+import testsupport.engine.TestPipelines;
 
 import testsupport.security.TestJwt;
 import testsupport.web.Http;
@@ -42,12 +49,34 @@ class ForwardedHeadersIT {
 
         @Value("${local.server.port}") int port;
 
+        @Autowired JdbcClient jdbc;
+
         @Test
         void locationUsesThePublicAddress() throws Exception {
             HttpResponse<String> res = postAccepted(port);
             assertThat(res.statusCode()).isEqualTo(202);
             assertThat(res.headers().firstValue("Location"))
                     .hasValue("https://apiorch.test.example.internal/api/v1/runs/r-1");
+        }
+
+        /** The real run endpoint too: its 202 points at the public address (found by the load-balancer check). */
+        @Test
+        void aRunsLocationUsesThePublicAddress() throws Exception {
+            ObjectNode doc = TestPipelines.sequential("FWD", "api1");
+            String code = PublishedFixtures.uniqueCode("FWD");
+            doc.put("code", code);
+            PublishedFixtures.publish(jdbc, doc, 1);
+            HttpResponse<String> res = HttpClient.newHttpClient().send(HttpRequest.newBuilder(URI.create(
+                            "http://127.0.0.1:" + port + "/api/v1/pipelines/" + code + "/runs?mode=async"))
+                    .header("Authorization", "Bearer " + TestJwt.allRoles())
+                    .header("Content-Type", "application/json")
+                    .header("X-Forwarded-Proto", "https")
+                    .header("X-Forwarded-Host", "apiorch.test.example.internal")
+                    .POST(HttpRequest.BodyPublishers.ofString("{}")).build(), HttpResponse.BodyHandlers.ofString());
+            assertThat(res.statusCode()).as(res.body()).isEqualTo(202);
+            String runId = com.crisil.apiorch.definition.DslJsonMapper.get().readTree(res.body()).path("runId").asText();
+            assertThat(res.headers().firstValue("Location"))
+                    .hasValue("https://apiorch.test.example.internal/api/v1/runs/" + runId);
         }
     }
 

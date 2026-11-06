@@ -15,5 +15,7 @@ services:
     ports: ["1433:1433"]
     environment:
       ACCEPT_EULA: "Y"
-      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:?set MSSQL_SA_PASSWORD for the local SQL Server}
+      # optional here, because Compose interpolates the whole file even for `up -d wiremock`; SQL Server itself
+      # refuses to start without a strong password, so set it before `--profile mssql up`
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:-}
     profiles: ["mssql"]

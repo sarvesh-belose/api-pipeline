@@ -20,7 +20,13 @@ function Run {
 function Draft($file) {
     $definition = Get-Content (Join-Path $seed $file) -Raw | ConvertFrom-Json
     $body = @{ definition = $definition } | ConvertTo-Json -Depth 20
-    Invoke-RestMethod -Method Put -Uri "$app/api/v1/admin/pipelines/DEMO_ONBOARD/draft" `
+    # an existing draft is replaced only with its ETag as If-Match (otherwise 428)
+    $headers = @{}
+    try {
+        $current = Invoke-WebRequest -UseBasicParsing "$app/api/v1/admin/pipelines/DEMO_ONBOARD/draft"
+        $headers['If-Match'] = $current.Headers['ETag']
+    } catch { }
+    Invoke-RestMethod -Method Put -Uri "$app/api/v1/admin/pipelines/DEMO_ONBOARD/draft" -Headers $headers `
         -ContentType 'application/json' -Body $body | Out-Null
 }
 
@@ -45,6 +51,11 @@ function Calls($runId) {
     (Invoke-RestMethod "$app/api/v1/runs/$runId/timeline").calls |
         Select-Object seq, type, stepId, attempt, url, httpStatus, durationMs, outcome | Format-Table -AutoSize
 }
+
+# a clean start when the script is run again: KYC healthy and its circuit closed
+Kyc 'Started'
+Invoke-RestMethod -Method Post -Uri "$app/api/v1/admin/endpoints/kyc-svc/circuit/reset" `
+    -ContentType 'application/json' -Body (@{ reason = 'demo start' } | ConvertTo-Json) | Out-Null
 
 Step '1. Run v1: api1 -> api2 -> api3 -> api5'
 $run = Run
