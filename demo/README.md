@@ -7,7 +7,23 @@ breaker. Everything runs on your machine: WireMock plays the downstream APIs, an
 
 The async parts (a document step that calls back, and "complete while async pending") arrive with slice B in R2.
 
-## Start
+## Start without Docker (Windows)
+
+Needs JDK 17 only. `demo/start.ps1` runs WireMock from its standalone jar (the one the build resolves as a test
+dependency) and apiorch from the built jar, both in the background, with a **file-based** H2 database in `data/h2`,
+so endpoints, pipeline versions and runs survive a restart:
+
+```powershell
+.\demo\start.ps1           # builds the jar first if there is none
+.\demo\start.ps1 -Build    # rebuild the jar first (tests skipped)
+.\demo\start.ps1 -Reset    # delete the H2 database first, for a fresh walkthrough
+.\demo\stop.ps1            # graceful stop of apiorch, then WireMock; the database is kept
+```
+
+Logs and PID files go to `target\demo`. The ports are the same as below (8080, 9091 and 8089); the script refuses
+to start when one is taken.
+
+## Start with Docker
 
 Needs Docker and JDK 17.
 
@@ -18,6 +34,8 @@ docker compose up -d wiremock
 ```bash
 ./mvnw spring-boot:run -Dspring-boot.run.profiles=local
 ```
+
+In PowerShell, quote the property: `.\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=local"`.
 
 Within a minute the app is ready on <http://localhost:8080>. The `local` profile seeds four endpoints
 (`customer-svc`, `kyc-svc`, `score-svc`, `notify-svc`, all on WireMock at <http://localhost:8089>) and publishes
