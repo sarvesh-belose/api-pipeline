@@ -31,6 +31,7 @@ class GracefulShutdownIT {
         int port = ((WebServerApplicationContext) ctx).getWebServer().getPort();
         Http http = new Http(port);
 
+        int before = TestEndpoints.SLOW_STARTED.get();
         CompletableFuture<HttpResponse<String>> inFlight = CompletableFuture.supplyAsync(() -> {
             try {
                 return http.get("/api/v1/test/slow");
@@ -38,7 +39,9 @@ class GracefulShutdownIT {
                 throw new IllegalStateException(e);
             }
         });
-        Thread.sleep(400);
+        // close only once the request is in the controller: a fixed sleep raced a loaded machine
+        org.awaitility.Awaitility.await().atMost(Duration.ofSeconds(10))
+                .until(() -> TestEndpoints.SLOW_STARTED.get() > before || inFlight.isDone());
         long start = System.nanoTime();
         ctx.close();
 

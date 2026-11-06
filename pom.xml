@@ -61,6 +61,8 @@
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-data-jpa</artifactId></dependency>
     <!-- US-5.3: one circuit breaker per endpoint and node (README §6); created programmatically, no Boot starter -->
     <dependency><groupId>io.github.resilience4j</groupId><artifactId>resilience4j-circuitbreaker</artifactId><version>${resilience4j.version}</version></dependency>
+    <!-- US-7.5: resilience4j_circuitbreaker_* meters per endpoint -->
+    <dependency><groupId>io.github.resilience4j</groupId><artifactId>resilience4j-micrometer</artifactId><version>${resilience4j.version}</version></dependency>
     <dependency><groupId>org.flywaydb</groupId><artifactId>flyway-core</artifactId></dependency>
     <dependency><groupId>org.flywaydb</groupId><artifactId>flyway-sqlserver</artifactId></dependency>
     <dependency><groupId>com.microsoft.sqlserver</groupId><artifactId>mssql-jdbc</artifactId><scope>runtime</scope></dependency>

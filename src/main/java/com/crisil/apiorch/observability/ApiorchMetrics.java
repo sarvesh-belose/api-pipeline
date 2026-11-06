@@ -31,8 +31,15 @@ public class ApiorchMetrics {
 
     private final MeterRegistry registry;
 
+    private final java.util.concurrent.atomic.AtomicInteger driven = new java.util.concurrent.atomic.AtomicInteger();
+    private final java.util.Map<String, java.util.concurrent.atomic.AtomicLong> byStatus =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
     public ApiorchMetrics(MeterRegistry registry) {
         this.registry = registry;
+        io.micrometer.core.instrument.Gauge.builder("apiorch.runs.driven", driven,
+                java.util.concurrent.atomic.AtomicInteger::get).description("Runs this node holds a lease on")
+                .register(registry);
     }
 
     /** {@code apiorch.run.duration{pipeline,status}}. */
@@ -72,6 +79,37 @@ public class ApiorchMetrics {
     /** {@code apiorch.payload.access.denied}: a detail read refused with {@code 403} (US-7.4 AC9). */
     public void payloadAccessDenied() {
         counter("apiorch.payload.access.denied", "Payload detail reads refused", Tags.empty()).increment();
+    }
+
+    /** {@code apiorch.recovery.runs.recovered} (US-5.5). */
+    public void runRecovered() {
+        counter("apiorch.recovery.runs.recovered", "Runs claimed and continued by recovery", Tags.empty()).increment();
+    }
+
+    /** {@code apiorch.recovery.steps.unknown}: steps whose outcome was lost with their node (US-5.5). */
+    public void stepUnknown() {
+        counter("apiorch.recovery.steps.unknown", "Steps found running by recovery and not safe to repeat",
+                Tags.empty()).increment();
+    }
+
+    /** {@code apiorch.runs.driven}: runs this node holds a lease on, set at each renewal (US-5.5). */
+    public void runsDriven(int count) {
+        driven.set(count);
+    }
+
+    /** {@code apiorch.runs.by.status{status}}: unfinished runs per status, from the database (US-7.5 AC4). */
+    public void runsByStatus(java.util.Map<String, Long> counts) {
+        for (com.crisil.apiorch.engine.RunStatus status : com.crisil.apiorch.engine.RunStatus.values()) {
+            if (!status.terminal()) {
+                byStatus.computeIfAbsent(status.name(), s -> {
+                    java.util.concurrent.atomic.AtomicLong value = new java.util.concurrent.atomic.AtomicLong();
+                    io.micrometer.core.instrument.Gauge.builder("apiorch.runs.by.status", value,
+                            java.util.concurrent.atomic.AtomicLong::get).description("Unfinished runs by status")
+                            .tags(checked(Tags.of("status", s))).register(registry);
+                    return value;
+                }).set(counts.getOrDefault(status.name(), 0L));
+            }
+        }
     }
 
     /** {@code apiorch.lease.lost}. */

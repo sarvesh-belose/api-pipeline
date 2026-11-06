@@ -10,7 +10,10 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import com.crisil.apiorch.engine.Lease;
+import org.springframework.jdbc.core.simple.JdbcClient;
+
 import com.crisil.apiorch.engine.RunLeaseService;
+import com.crisil.apiorch.observability.ApiorchMetrics;
 import com.crisil.apiorch.persistence.RunRows;
 
 /**
@@ -28,11 +31,31 @@ public class RecoverySweeper {
     private final RunLeaseService leases;
     private final RunCoordinator coordinator;
     private final RunRows rows;
+    private final ApiorchMetrics metrics;
+    private final JdbcClient jdbc;
 
-    public RecoverySweeper(RunLeaseService leases, RunCoordinator coordinator, RunRows rows) {
+    public RecoverySweeper(RunLeaseService leases, RunCoordinator coordinator, RunRows rows, ApiorchMetrics metrics,
+            JdbcClient jdbc) {
         this.leases = leases;
         this.coordinator = coordinator;
         this.rows = rows;
+        this.metrics = metrics;
+        this.jdbc = jdbc;
+    }
+
+    /** US-7.5 AC4: {@code apiorch.runs.by.status}, refreshed from the database (every node reports the same view). */
+    @Scheduled(fixedDelayString = "${apiorch.metrics.run-status-interval-ms:30000}", initialDelay = 1000)
+    void runStatus() {
+        try {
+            java.util.Map<String, Long> counts = new java.util.HashMap<>();
+            jdbc.sql("SELECT status, COUNT(*) AS n FROM pipeline_run WHERE ended_at IS NULL GROUP BY status")
+                    .query((java.sql.ResultSet rs) -> {
+                        counts.put(rs.getString("status"), rs.getLong("n"));
+                    });
+            metrics.runsByStatus(counts);
+        } catch (RuntimeException e) {
+            log.warn("run status gauge refresh failed: {}", e.getClass().getSimpleName());
+        }
     }
 
     @Scheduled(fixedDelayString = "${apiorch.lease.renew-interval-ms:10000}",
@@ -40,6 +63,7 @@ public class RecoverySweeper {
     void renew() {
         try {
             Set<UUID> owned = leases.renewAll();
+            metrics.runsDriven(owned.size());
             log.debug("leases renewed owned={}", owned.size());
         } catch (RuntimeException e) {
             log.warn("lease renewal failed: {}", e.getClass().getSimpleName());
@@ -49,6 +73,9 @@ public class RecoverySweeper {
     @Scheduled(fixedDelayString = "${apiorch.recovery.sweep-interval-ms:15000}",
             initialDelayString = "${apiorch.recovery.sweep-interval-ms:15000}")
     void sweep() {
+        if (coordinator.draining()) {
+            return; // a node shutting down takes on no runs
+        }
         try {
             for (UUID runId : leases.claimable(BATCH)) {
                 String previousOwner = rows.run(runId).map(RunRows.Run::ownerInstance).orElse(null);

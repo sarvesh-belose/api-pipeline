@@ -61,8 +61,12 @@ public class TestEndpoints {
                         .path("/api/v1/runs/{id}").buildAndExpand("r-1").toUri()).build();
     }
 
+    /** Counts {@code /api/v1/test/slow} requests that reached the controller, so a test knows one is in flight. */
+    public static final java.util.concurrent.atomic.AtomicInteger SLOW_STARTED = new java.util.concurrent.atomic.AtomicInteger();
+
     @GetMapping("/api/v1/test/slow")
     public Map<String, Object> slow() throws InterruptedException {
+        SLOW_STARTED.incrementAndGet();
         Thread.sleep(1500);
         return Map.of("done", true);
     }

@@ -18,6 +18,9 @@ import org.springframework.web.client.RestClient;
 
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
+import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
+import io.github.resilience4j.micrometer.tagged.TaggedCircuitBreakerMetrics;
+import io.micrometer.core.instrument.MeterRegistry;
 
 import com.crisil.apiorch.endpoint.EndpointChangedEvent;
 import com.crisil.apiorch.endpoint.EndpointConfig;
@@ -49,11 +52,14 @@ public class EndpointClientRegistry {
     private final OAuth2TokenCache tokens;
     private final long maxResponseBytes;
     private final java.time.Clock clock;
+    private final CircuitBreakerRegistry circuits = CircuitBreakerRegistry.ofDefaults();
 
     public EndpointClientRegistry(EndpointRepository repository, EndpointMapper mapper,
             RestClient.Builder restClientBuilder, SecretResolver secrets, OAuth2TokenCache tokens,
-            com.crisil.apiorch.config.ApiorchProperties properties, java.time.Clock clock) {
+            com.crisil.apiorch.config.ApiorchProperties properties, java.time.Clock clock, MeterRegistry meters) {
         this.clock = clock;
+        // US-7.5 AC3: resilience4j_circuitbreaker_* tagged with the endpoint name (bounded by the endpoint table)
+        TaggedCircuitBreakerMetrics.ofCircuitBreakerRegistry(circuits).bindTo(meters);
         this.repository = repository;
         this.mapper = mapper;
         this.restClientBuilder = restClientBuilder;
@@ -85,6 +91,7 @@ public class EndpointClientRegistry {
             runtimes.keySet().removeIf(name -> {
                 boolean gone = !stored.containsKey(name);
                 if (gone) {
+                    circuits.remove(name);
                     log.info("endpoint runtime removed name={}", name);
                 }
                 return gone;
@@ -104,6 +111,7 @@ public class EndpointClientRegistry {
         Optional<EndpointEntity> entity = repository.findByName(name);
         if (entity.isEmpty()) {
             runtimes.remove(name);
+            circuits.remove(name);
             return Optional.empty();
         }
         EndpointRuntime runtime = build(mapper.toConfig(entity.get()));
@@ -152,7 +160,9 @@ public class EndpointClientRegistry {
                     .waitDurationInOpenState(Duration.ofMillis(c.waitInOpenMs()))
                     .permittedNumberOfCallsInHalfOpenState(c.halfOpenCalls());
         }
-        CircuitBreaker cb = CircuitBreaker.of(config.name(), b.build());
+        // through the shared registry, so a rebuild removes the old breaker's meters before the new ones bind
+        circuits.remove(config.name());
+        CircuitBreaker cb = circuits.circuitBreaker(config.name(), b.build());
         circuitSince.put(config.name(), java.time.Instant.now(clock));
         cb.getEventPublisher().onStateTransition(e -> {
             circuitSince.put(config.name(), java.time.Instant.now(clock));

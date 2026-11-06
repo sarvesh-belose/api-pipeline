@@ -12,7 +12,10 @@ import com.crisil.apiorch.observability.EventType;
 import com.crisil.apiorch.step.AttemptLog;
 import com.crisil.apiorch.step.StepInvocation;
 
-/** {@code REQUEST_SENT} in its own short fenced transaction, committed before the call is made (US-4.3). */
+/**
+ * {@code REQUEST_SENT} in its own short fenced transaction, committed before the call is made (US-4.3); repeated if
+ * it loses to lock contention.
+ */
 @Component
 public class FencedAttemptLog implements AttemptLog {
 
@@ -28,12 +31,12 @@ public class FencedAttemptLog implements AttemptLog {
 
     @Override
     public long requestSent(StepInvocation invocation, int attemptNo, String method) {
-        return tx.execute(s -> {
+        return com.crisil.apiorch.persistence.LockRetry.run(() -> tx.execute(s -> {
             leases.lockFenced(invocation.lease());
             return recorder.record(invocation.runId(), EventType.REQUEST_SENT,
                     StepRef.attempt(invocation.step().id(), invocation.execNo(), attemptNo),
                     Map.of("endpoint", invocation.step().definition().endpoint(), "method", method,
                             "attempt", attemptNo), null);
-        });
+        }));
     }
 }
