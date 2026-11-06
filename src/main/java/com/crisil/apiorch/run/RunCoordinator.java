@@ -81,6 +81,7 @@ public class RunCoordinator {
     private final CallerExchangeLog exchanges;
     private final Clock clock;
     private final long defaultRunTimeoutMs;
+    private final int maxParallelSteps;
 
     public RunCoordinator(TransactionTemplate tx, RunRows rows, RunLeaseService leases, ActivityRecorder recorder,
             PublishedPipelines pipelines, StepExecutor executor,
@@ -102,6 +103,7 @@ public class RunCoordinator {
         this.exchanges = exchanges;
         this.clock = clock;
         this.defaultRunTimeoutMs = properties.run().defaultRunTimeoutMs();
+        this.maxParallelSteps = properties.run().maxParallelSteps();
     }
 
     /** {@code ACCEPTED → RUNNING} with {@code RUN_STARTED}, then the first {@link #advance}. */
@@ -159,7 +161,11 @@ public class RunCoordinator {
                 rows.skipStep(run.id(), skip.stepId(), skip.reason());
             }
             recorder.record(run.id(), EventType.STEP_SKIPPED, StepRef.of(skip.stepId(), 1),
-                    Map.of("reason", skip.reason()), null);
+                    details("reason", skip.reason(), "dependency", skip.dependency()), null);
+            if (skip.dependency() != null) {
+                log.info("step skipped stepId={} reason={} dependency={}", skip.stepId(), skip.reason(),
+                        skip.dependency());
+            }
         }
         if (next.quiescent()) {
             boolean degraded = steps.stream().anyMatch(RunRows.Step::fallbackApplied);
@@ -168,18 +174,24 @@ public class RunCoordinator {
             finish(run, pipeline, status, steps.size());
             return List.of();
         }
-        if (next.ready().isEmpty()) {
+        // AC4: at most max-parallel-steps in flight; each completion advances and submits the next
+        long inFlight = steps.stream().filter(st -> st.status() == StepStatus.RUNNING).count();
+        List<CompiledStep> ready = next.ready().stream()
+                .limit(Math.max(0, maxParallelSteps - inFlight)).toList();
+        log.debug("ready set computed ready={} skipped={} inFlight={}", next.ready().stream().map(CompiledStep::id)
+                .toList(), next.skip().stream().map(RunDecision.Skip::stepId).toList(), inFlight);
+        if (ready.isEmpty()) {
             return List.of();
         }
         ObjectNode context = context(run);
         List<StepInvocation> out = new ArrayList<>();
-        for (CompiledStep step : next.ready()) {
+        for (CompiledStep step : ready) {
             rows.markStepRunning(run.id(), step.id());
             recorder.record(run.id(), EventType.STEP_SCHEDULED, StepRef.of(step.id(), 1), Map.of("stepId", step.id(),
                     "execNo", 1, "endpoint", step.definition().endpoint(), "mode", step.definition().effectiveMode().name()),
                     null);
             out.add(new StepInvocation(lease, run.pipelineCode(), run.pipelineVersion(), run.correlationId(), step, 1,
-                    context, null));
+                    snapshot(context, pipeline, step), null));
         }
         return out;
     }
@@ -360,6 +372,14 @@ public class RunCoordinator {
         } catch (LeaseLostException lost) {
             metrics.leaseLost();
         }
+    }
+
+    /** The step's view: {@code input}, {@code run} and its ancestors' results only (US-4.4, the US-3.2 rule). */
+    private static ObjectNode snapshot(ObjectNode context, CompiledPipeline pipeline, CompiledStep step) {
+        ObjectNode view = context.deepCopy();
+        java.util.Set<String> ancestors = pipeline.ancestors(step.id());
+        ((ObjectNode) view.path("steps")).retain(ancestors);
+        return view;
     }
 
     private ObjectNode context(RunRows.Run run) {

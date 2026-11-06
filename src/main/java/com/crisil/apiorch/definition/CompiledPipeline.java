@@ -34,6 +34,19 @@ public record CompiledPipeline(
         return step;
     }
 
+    /** Every step {@code id} depends on, directly or transitively (US-4.4: what its context snapshot holds). */
+    public java.util.Set<String> ancestors(String id) {
+        java.util.Set<String> out = new java.util.LinkedHashSet<>();
+        java.util.Deque<String> todo = new java.util.ArrayDeque<>(step(id).dependsOn());
+        while (!todo.isEmpty()) {
+            String next = todo.pop();
+            if (out.add(next)) {
+                todo.addAll(step(next).dependsOn());
+            }
+        }
+        return out;
+    }
+
     /** Steps with no dependencies. */
     public List<CompiledStep> roots() {
         return steps.stream().filter(s -> s.dependsOn().isEmpty()).toList();

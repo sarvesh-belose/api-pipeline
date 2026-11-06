@@ -21,7 +21,8 @@ import com.crisil.apiorch.definition.CompiledStep;
  */
 public final class RunDecision {
 
-    public record Skip(String stepId, String reason) {
+    /** {@code dependency}: the dependency that did not succeed, for {@code DEPENDENCY_FAILED}. */
+    public record Skip(String stepId, String reason, String dependency) {
     }
 
     /** {@code finalStatus} is set only at quiescence. */
@@ -52,7 +53,7 @@ public final class RunDecision {
                 continue;
             }
             CompiledStep step = pipeline.step(id);
-            boolean blocked = false;
+            String blocked = null;
             boolean waiting = false;
             for (String dep : step.dependsOn()) {
                 StepStatus depStatus = effective.get(dep);
@@ -60,16 +61,16 @@ public final class RunDecision {
                     continue;
                 }
                 if (depStatus.finished()) {
-                    blocked = true;
+                    blocked = blocked != null ? blocked : dep;
                 } else {
                     waiting = true;
                 }
             }
             if (stopping) {
-                skip.add(new Skip(id, "RUN_STOPPED"));
+                skip.add(new Skip(id, "RUN_STOPPED", null));
                 effective.put(id, StepStatus.SKIPPED);
-            } else if (blocked) {
-                skip.add(new Skip(id, "DEPENDENCY_FAILED"));
+            } else if (blocked != null) {
+                skip.add(new Skip(id, "DEPENDENCY_FAILED", blocked));
                 effective.put(id, StepStatus.SKIPPED);
             } else if (!waiting) {
                 ready.add(step);
@@ -82,6 +83,8 @@ public final class RunDecision {
             boolean anyNotSucceeded = effective.values().stream().anyMatch(s -> s != StepStatus.SUCCEEDED);
             finalStatus = stopping ? RunStatus.FAILED : anyNotSucceeded ? RunStatus.COMPLETED_WITH_ERRORS : RunStatus.COMPLETED;
         }
+        // AC3: submitted in list order, whatever the topological walk visited first
+        ready.sort(java.util.Comparator.comparingInt(CompiledStep::index));
         return new Next(List.copyOf(ready), List.copyOf(skip), finalStatus);
     }
 }
