@@ -18,6 +18,7 @@ import com.crisil.apiorch.engine.Lease;
  * @param deadline      the run's segment deadline; each attempt's timeout is capped by the time left (US-5.1)
  * @param timeoutMs     the step's {@code timeoutMs}, else the pipeline's {@code defaults.timeoutMs}; {@code null}
  *                      means the endpoint's {@code readTimeoutMs}
+ * @param attemptNo     1 for the first attempt of this execution; each retry adds one (US-5.2)
  */
 public record StepInvocation(
         Lease lease,
@@ -28,9 +29,16 @@ public record StepInvocation(
         int execNo,
         JsonNode context,
         Instant deadline,
-        Integer timeoutMs) {
+        Integer timeoutMs,
+        int attemptNo) {
 
     public UUID runId() {
         return lease.runId();
+    }
+
+    /** The next attempt of the same execution: same context, deadline and {@code Idempotency-Key}. */
+    public StepInvocation nextAttempt() {
+        return new StepInvocation(lease, pipeline, version, correlationId, step, execNo, context, deadline, timeoutMs,
+                attemptNo + 1);
     }
 }

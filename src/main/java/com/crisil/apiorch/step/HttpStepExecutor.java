@@ -107,7 +107,7 @@ public class HttpStepExecutor implements StepExecutor {
             }
         }
 
-        int attemptNo = 1;
+        int attemptNo = invocation.attemptNo();
         long seq = attempts.requestSent(invocation, attemptNo, request.method());
         Instant startedAt = Instant.now(clock);
         log.info("step started method={} url={}", request.method(), masked(request.uri()));

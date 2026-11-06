@@ -35,4 +35,11 @@ public record AttemptRecord(
         Instant startedAt,
         Instant endedAt,
         long durationMs) {
+
+    /** The same attempt, with the delay before the retry it led to (US-5.2). */
+    public AttemptRecord withNextRetryDelay(long delayMs) {
+        return new AttemptRecord(runId, stepId, execNo, attemptNo, kind, eventSeq, endpointName, method, url,
+                requestHeaders, requestBody, requestBytes, responseStatus, responseHeaders, responseBody, responseBytes,
+                outcome, errorClass, errorMessage, circuitState, delayMs, startedAt, endedAt, durationMs);
+    }
 }
