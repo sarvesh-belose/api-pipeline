@@ -1,6 +1,11 @@
 package com.crisil.apiorch.run;
 
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
@@ -24,10 +29,12 @@ import org.springframework.web.bind.annotation.RestController;
 import com.fasterxml.jackson.databind.JsonNode;
 
 import com.crisil.apiorch.config.ExecutorConfig;
+import com.crisil.apiorch.config.RequestSizeLimitFilter;
 import com.crisil.apiorch.engine.RunStatus;
 import com.crisil.apiorch.observability.ApiProblemException;
 import com.crisil.apiorch.observability.CorrelationIdFilter;
 import com.crisil.apiorch.observability.ProblemTypes;
+import com.crisil.apiorch.run.dto.ExchangeView;
 import com.crisil.apiorch.run.dto.RunResource;
 
 /**
@@ -44,13 +51,15 @@ public class RunController {
     private final RunService runs;
     private final RunQueryService queries;
     private final RunResourceAssembler assembler;
+    private final CallerExchangeLog exchanges;
     private final ThreadPoolTaskExecutor responses;
 
     public RunController(RunService runs, RunQueryService queries, RunResourceAssembler assembler,
-            @Qualifier(ExecutorConfig.RUN_RESPONSE) ThreadPoolTaskExecutor responses) {
+            CallerExchangeLog exchanges, @Qualifier(ExecutorConfig.RUN_RESPONSE) ThreadPoolTaskExecutor responses) {
         this.runs = runs;
         this.queries = queries;
         this.assembler = assembler;
+        this.exchanges = exchanges;
         this.responses = responses;
     }
 
@@ -68,20 +77,29 @@ public class RunController {
                     "mode must be sync or async");
         };
         String correlationId = (String) request.getAttribute(CorrelationIdFilter.ATTRIBUTE);
-        RunService.Started started = runs.start(code, version, input, sync, correlationId, caller);
+        RunService.Started started = runs.start(code, version, input, sync, correlationId, inbound(request, input),
+                caller);
         if (!sync) {
-            ResponseEntity.BodyBuilder accepted = ResponseEntity.status(HttpStatus.ACCEPTED)
-                    .location(URI.create("/api/v1/runs/" + started.runId()))
-                    .header("X-Apiorch-Run-Id", started.runId().toString())
-                    .header("X-Apiorch-Run-Status", "ACCEPTED");
-            if (preferAsync) {
-                accepted.header("Preference-Applied", RESPOND_ASYNC);
-            }
-            return CompletableFuture.completedFuture(
-                    accepted.body(RunResourceAssembler.accepted(started.runId(), code, started.version())));
+            return CompletableFuture.completedFuture(exchanges.respond(started.runId(), () -> {
+                ResponseEntity.BodyBuilder accepted = ResponseEntity.status(HttpStatus.ACCEPTED)
+                        .location(URI.create("/api/v1/runs/" + started.runId()))
+                        .header("X-Apiorch-Run-Id", started.runId().toString())
+                        .header("X-Apiorch-Run-Status", "ACCEPTED");
+                if (preferAsync) {
+                    accepted.header("Preference-Applied", RESPOND_ASYNC);
+                }
+                return accepted.body(RunResourceAssembler.accepted(started.runId(), code, started.version()));
+            }, false));
         }
         long waitStart = System.nanoTime();
-        return started.done().thenApplyAsync(done -> respond(started.runId(), waitStart), responses);
+        return started.done().thenApplyAsync(done -> exchanges.respond(started.runId(),
+                () -> respond(started.runId(), waitStart), false), responses);
+    }
+
+    /** US-7.7: the caller's exchange rows, oldest first ({@code apiorch.ops}). */
+    @GetMapping("/api/v1/runs/{runId}/exchanges/{kind}")
+    public List<ExchangeView> exchanges(@PathVariable String runId, @PathVariable String kind) {
+        return queries.exchanges(runId, kind);
     }
 
     /** US-4.2: the caller's own run, or any run for {@code apiorch.ops}; polled until done. */
@@ -95,6 +113,18 @@ public class RunController {
             ok.header("Retry-After", "2");
         }
         return ok.body(resource);
+    }
+
+    private static RunService.Inbound inbound(HttpServletRequest request, JsonNode input) {
+        Map<String, String> headers = new LinkedHashMap<>();
+        for (String name : Collections.list(request.getHeaderNames())) {
+            headers.put(name, request.getHeader(name));
+        }
+        Object counted = request.getAttribute(RequestSizeLimitFilter.BODY_BYTES);
+        long bytes = counted instanceof Long n && n > 0 ? n
+                : request.getContentLengthLong() >= 0 ? request.getContentLengthLong()
+                : input.toString().getBytes(StandardCharsets.UTF_8).length;
+        return new RunService.Inbound(headers, bytes);
     }
 
     static boolean prefersAsync(String prefer) {

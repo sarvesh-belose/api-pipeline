@@ -46,12 +46,13 @@ public class RunService {
     private final JdbcRunLeaseService leases;
     private final ActivityRecorder recorder;
     private final RunCoordinator coordinator;
+    private final CallerExchangeLog exchanges;
     private final TransactionTemplate tx;
     private final ApiorchProperties.Run settings;
 
     public RunService(PublishedPipelines pipelines, InputValidator inputValidator, RunCompletionNotifier notifier,
             RunRows rows, JdbcRunLeaseService leases, ActivityRecorder recorder, RunCoordinator coordinator,
-            TransactionTemplate tx, ApiorchProperties properties) {
+            CallerExchangeLog exchanges, TransactionTemplate tx, ApiorchProperties properties) {
         this.pipelines = pipelines;
         this.inputValidator = inputValidator;
         this.notifier = notifier;
@@ -59,12 +60,17 @@ public class RunService {
         this.leases = leases;
         this.recorder = recorder;
         this.coordinator = coordinator;
+        this.exchanges = exchanges;
         this.tx = tx;
         this.settings = properties.run();
     }
 
+    /** The caller's request as received, for the exchange log (US-7.7); {@code bytes} is the true body size. */
+    public record Inbound(Map<String, String> headers, long bytes) {
+    }
+
     public Started start(String code, Integer requestedVersion, JsonNode input, boolean sync, String correlationId,
-            Authentication caller) {
+            Inbound inbound, Authentication caller) {
         int version = resolveVersion(code, requestedVersion, caller);
         CompiledPipeline pipeline = pipelines.compiled(code, version);
         inputValidator.check(pipeline, input);
@@ -82,7 +88,8 @@ public class RunService {
                 }
                 rows.putContext(runId, "input", input);
                 recorder.record(runId, EventType.RUN_ACCEPTED, null, Map.of("mode", mode, "version", version,
-                        "inputBytes", input.toString().length()), null);
+                        "inputBytes", inbound.bytes()), null);
+                exchanges.inbound(runId, code, version, inbound.headers(), input, inbound.bytes());
             });
         } catch (RuntimeException e) {
             notifier.cancel(runId);

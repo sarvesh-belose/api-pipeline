@@ -72,6 +72,11 @@ public class RunCompletionNotifier {
         }
     }
 
+    /** Whether a sync request on this node is still waiting for the run (US-7.7: it will write the final row). */
+    public boolean isWaiting(UUID runId) {
+        return waiters.containsKey(runId);
+    }
+
     int waiting() {
         return waiters.size();
     }

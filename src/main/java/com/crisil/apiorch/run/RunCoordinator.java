@@ -24,8 +24,6 @@ import com.crisil.apiorch.config.ApiorchProperties;
 import com.crisil.apiorch.config.ExecutorConfig;
 import com.crisil.apiorch.definition.CompiledPipeline;
 import com.crisil.apiorch.definition.CompiledStep;
-import com.crisil.apiorch.definition.PipelineDefinition;
-import com.crisil.apiorch.definition.PipelineDefinition.Capture;
 import com.crisil.apiorch.definition.StepDefinition.OnFailure;
 import com.crisil.apiorch.engine.Lease;
 import com.crisil.apiorch.engine.LeaseLostException;
@@ -42,8 +40,7 @@ import com.crisil.apiorch.observability.ApiorchMetrics;
 import com.crisil.apiorch.observability.ActivityRecorder.StepRef;
 import com.crisil.apiorch.observability.AttemptRecord;
 import com.crisil.apiorch.observability.AttemptWriter;
-import com.crisil.apiorch.observability.MaskingPolicy;
-import com.crisil.apiorch.http.EndpointClientRegistry;
+import com.crisil.apiorch.observability.CaptureSettings;
 import com.crisil.apiorch.observability.EventType;
 import com.crisil.apiorch.observability.MdcSupport;
 import com.crisil.apiorch.persistence.ContextCipher;
@@ -75,17 +72,17 @@ public class RunCoordinator {
     private final RunCompletionNotifier notifier;
     private final ExpressionEvaluator evaluator;
     private final AttemptWriter attempts;
-    private final EndpointClientRegistry endpoints;
-    private final ApiorchProperties.Logging logging;
+    private final CapturePolicies captures;
     private final ApiorchMetrics metrics;
+    private final CallerExchangeLog exchanges;
     private final Clock clock;
     private final long defaultRunTimeoutMs;
 
     public RunCoordinator(TransactionTemplate tx, RunRows rows, RunLeaseService leases, ActivityRecorder recorder,
             PublishedPipelines pipelines, StepExecutor executor,
             @Qualifier(ExecutorConfig.STEP_IO) ThreadPoolTaskExecutor stepIo, RunCompletionNotifier notifier,
-            ExpressionEvaluator evaluator, AttemptWriter attempts, EndpointClientRegistry endpoints,
-            ApiorchMetrics metrics, Clock clock, ApiorchProperties properties) {
+            ExpressionEvaluator evaluator, AttemptWriter attempts, CapturePolicies captures,
+            ApiorchMetrics metrics, CallerExchangeLog exchanges, Clock clock, ApiorchProperties properties) {
         this.tx = tx;
         this.rows = rows;
         this.leases = leases;
@@ -96,9 +93,9 @@ public class RunCoordinator {
         this.notifier = notifier;
         this.evaluator = evaluator;
         this.attempts = attempts;
-        this.endpoints = endpoints;
-        this.logging = properties.logging();
+        this.captures = captures;
         this.metrics = metrics;
+        this.exchanges = exchanges;
         this.clock = clock;
         this.defaultRunTimeoutMs = properties.run().defaultRunTimeoutMs();
     }
@@ -264,16 +261,8 @@ public class RunCoordinator {
         if (outcome.trail().isEmpty()) {
             return;
         }
-        PipelineDefinition definition = pipelines.compiled(invocation.pipeline(), invocation.version()).definition();
-        PipelineDefinition.LoggingSpec stepLogging = invocation.step().definition().logging();
-        PipelineDefinition.LoggingSpec pipelineLogging = definition.logging();
-        Capture capture = stepLogging != null && stepLogging.capture() != null ? stepLogging.capture()
-                : pipelineLogging != null && pipelineLogging.capture() != null ? pipelineLogging.capture()
-                : logging.defaultCapture();
-        int maxBody = stepLogging != null && stepLogging.maxBodyBytes() != null ? stepLogging.maxBodyBytes()
-                : pipelineLogging != null && pipelineLogging.maxBodyBytes() != null ? pipelineLogging.maxBodyBytes()
-                : logging.defaultMaxBodyBytes();
-        MaskingPolicy policy = maskingPolicy(invocation.step(), pipelineLogging, stepLogging);
+        CaptureSettings settings = captures.forStep(
+                pipelines.compiled(invocation.pipeline(), invocation.version()).definition(), invocation.step());
         for (StepAttempt attempt : outcome.trail()) {
             AttemptRecord a = attempt.record();
             StepRef ref = StepRef.attempt(a.stepId(), a.execNo(), a.attemptNo());
@@ -285,24 +274,8 @@ public class RunCoordinator {
                         "durationMs", a.durationMs(), "requestBytes", a.requestBytes(), "responseBytes",
                         a.responseBytes()), null);
             }
-            attempts.write(a, capture, maxBody, policy);
+            attempts.write(a, settings.capture(), settings.maxBodyBytes(), settings.policy());
         }
-    }
-
-    /** The global lists, the pipeline's and step's {@code maskKeys}, and the endpoint's API key header (US-7.3). */
-    private MaskingPolicy maskingPolicy(CompiledStep step, PipelineDefinition.LoggingSpec pipelineLogging,
-            PipelineDefinition.LoggingSpec stepLogging) {
-        List<String> headers = new ArrayList<>(logging.alwaysMaskHeaders());
-        endpoints.get(step.definition().endpoint()).map(r -> r.config().auth())
-                .filter(auth -> auth != null && auth.headerName() != null).ifPresent(auth -> headers.add(auth.headerName()));
-        List<String> keys = new ArrayList<>(logging.alwaysMaskKeys());
-        if (pipelineLogging != null && pipelineLogging.maskKeys() != null) {
-            keys.addAll(pipelineLogging.maskKeys());
-        }
-        if (stepLogging != null && stepLogging.maskKeys() != null) {
-            keys.addAll(stepLogging.maskKeys());
-        }
-        return MaskingPolicy.of(headers, keys);
     }
 
     /** {@code fallback} over the context plus {@code error}; its result becomes {@code steps.<id>.body} (US-4.6). */
@@ -342,6 +315,7 @@ public class RunCoordinator {
         details.put("steps", stepCount);
         recorder.record(run.id(), event, null, details, null);
         rows.finishRun(run.id(), finalStatus);
+        exchanges.finalResult(run.id());
         java.util.UUID runId = run.id();
         RunStatus logged = finalStatus;
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
@@ -370,6 +344,7 @@ public class RunCoordinator {
                 recorder.record(run.id(), EventType.RUN_FAILED, null,
                         Map.of("code", ContextCipher.DecryptionException.CODE), null);
                 rows.finishRun(run.id(), RunStatus.FAILED);
+                exchanges.finalResult(run.id());
                 java.util.UUID runId = run.id();
                 TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                     @Override

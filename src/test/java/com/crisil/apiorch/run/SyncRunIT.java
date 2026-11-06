@@ -104,8 +104,9 @@ class SyncRunIT {
         assertThat(row.get("owner_instance")).isNull();
         List<String> events = jdbc.sql("SELECT event_type FROM run_event WHERE run_id = :id ORDER BY seq")
                 .param("id", runId).query(String.class).list();
-        assertThat(events.subList(0, 3)).containsExactly("RUN_ACCEPTED", "RUN_STARTED", "STEP_SCHEDULED");
-        assertThat(events).endsWith("RUN_COMPLETED").contains("STEP_SUCCEEDED");
+        assertThat(events.subList(0, 4)).containsExactly("RUN_ACCEPTED", "INBOUND_REQUEST_RECEIVED", "RUN_STARTED",
+                "STEP_SCHEDULED");
+        assertThat(events).endsWith("RUN_COMPLETED", "CALLER_RESPONSE_SENT").contains("STEP_SUCCEEDED");
         assertThat(jdbc.sql("SELECT COUNT(*) FROM run_context WHERE run_id = :id AND entry_key = 'input'")
                 .param("id", runId).query(Integer.class).single()).isEqualTo(1);
     }

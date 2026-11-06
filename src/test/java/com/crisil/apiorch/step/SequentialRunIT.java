@@ -119,17 +119,17 @@ class SequentialRunIT {
                 .withRequestBody(equalToJson("{\"customerId\":\"C-77\",\"name\":\"Asha\"}")));
         assertThat(run.at("/output/api1/segment").asText()).isEqualTo("RETAIL");
 
-        List<String> expected = new ArrayList<>(List.of("RUN_ACCEPTED", "RUN_STARTED"));
+        List<String> expected = new ArrayList<>(List.of("RUN_ACCEPTED", "INBOUND_REQUEST_RECEIVED", "RUN_STARTED"));
         for (String id : List.of("api1", "api2", "api3", "api4", "api5")) {
             expected.addAll(List.of("STEP_SCHEDULED:" + id, "REQUEST_SENT:" + id, "RESPONSE_RECEIVED:" + id,
                     "STEP_SUCCEEDED:" + id));
         }
-        expected.add("RUN_COMPLETED");
+        expected.addAll(List.of("RUN_COMPLETED", "CALLER_RESPONSE_SENT"));
         String runId = run.path("runId").asText();
         assertThat(events(runId)).containsExactlyElementsOf(expected);
         assertThat(jdbc.sql("SELECT MIN(seq), MAX(seq), COUNT(*) FROM run_event WHERE run_id = :id")
                 .param("id", UUID.fromString(runId)).query((rs, i) -> List.of(rs.getLong(1), rs.getLong(2),
-                        rs.getLong(3))).single()).containsExactly(1L, 23L, 23L);
+                        rs.getLong(3))).single()).containsExactly(1L, 25L, 25L);
 
         // the reordered version, under its own code: a fixture insert does not evict the latest-version cache
         api.resetRequests();
