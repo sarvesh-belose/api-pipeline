@@ -170,6 +170,13 @@ public class RunRows {
                 .param("run", runId).param("step", stepId).update();
     }
 
+    /** A step found {@code RUNNING} by recovery that is safe to send again (US-5.5): back to {@code PENDING}. */
+    public void resetStep(UUID runId, String stepId) {
+        jdbc.sql("UPDATE step_execution SET status = 'PENDING', started_at = NULL, row_version = row_version + 1 "
+                + "WHERE run_id = :run AND step_id = :step AND status = 'RUNNING'")
+                .param("run", runId).param("step", stepId).update();
+    }
+
     public void skipStep(UUID runId, String stepId, String reason) {
         jdbc.sql("UPDATE step_execution SET status = 'SKIPPED', skip_reason = :reason, ended_at = SYSUTCDATETIME(), "
                 + "row_version = row_version + 1 WHERE run_id = :run AND step_id = :step AND status = 'PENDING'")

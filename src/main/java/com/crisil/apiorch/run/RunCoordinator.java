@@ -70,6 +70,7 @@ public class RunCoordinator {
 
     static final String STEP_FAILED = "STEP_FAILED";
     static final String DEADLINE = "DEADLINE";
+    static final String STEP_OUTCOME_UNKNOWN = "STEP_OUTCOME_UNKNOWN";
     static final int LOCK_RETRIES = 5;
     static final String RUN_TIMEOUT = "RUN_TIMEOUT";
     static final String OUTPUT_EXPRESSION_ERROR = "OUTPUT_EXPRESSION_ERROR";
@@ -486,6 +487,85 @@ public class RunCoordinator {
                 outcome.durationMs(),
                 outcome.errorCode(), outcome.errorMessage(), false, seq);
         rows.stop(runId, DEADLINE, RUN_TIMEOUT, "Run deadline reached", null);
+    }
+
+    /**
+     * Continues a run this node just claimed (US-5.5) from its persisted state: {@code RUN_RECOVERED}; an orphan still
+     * {@code ACCEPTED} is started (AC6); steps found {@code RUNNING} are reconciled, because their outcome died with
+     * the other node. Past the deadline they are cut as in US-5.1 (idempotent {@code CANCELLED}, else
+     * {@code UNKNOWN}) and the run times out (AC7 of US-5.1); otherwise idempotent ones go back to {@code PENDING}
+     * and run again with the same {@code Idempotency-Key}, and the others become {@code UNKNOWN} and stop the run
+     * for an operator (AC2). A persisted stop is honoured by {@code advance}.
+     */
+    public void recover(Lease lease, String previousOwner) {
+        Long remaining;
+        try {
+            remaining = inTx(s -> {
+                leases.lockFenced(lease);
+                RunRows.Run run = rows.run(lease.runId()).orElseThrow();
+                if (run.status().terminal()) {
+                    return null;
+                }
+                recorder.record(run.id(), EventType.RUN_RECOVERED, null, details("previousOwner", previousOwner,
+                        "newOwner", lease.owner(), "epoch", lease.epoch()), null);
+                CompiledPipeline pipeline = pipelines.compiled(run.pipelineCode(), run.pipelineVersion());
+                if (run.status() == RunStatus.ACCEPTED) {
+                    long timeout = pipeline.definition().runTimeoutMs() != null ? pipeline.definition().runTimeoutMs()
+                            : defaultRunTimeoutMs;
+                    rows.markRunning(run.id(), timeout);
+                    recorder.record(run.id(), EventType.RUN_STARTED, null, Map.of("runTimeoutMs", timeout), null);
+                }
+                long left = rows.remainingMs(run.id()).orElse(Long.MAX_VALUE);
+                for (RunRows.Step st : rows.steps(run.id())) {
+                    if (st.status() != StepStatus.RUNNING) {
+                        continue;
+                    }
+                    boolean idempotent = pipeline.step(st.stepId()).definition().effectiveIdempotent();
+                    StepRef ref = StepRef.of(st.stepId(), st.execNo());
+                    if (left <= 0) {
+                        StepStatus cut = idempotent ? StepStatus.CANCELLED : StepStatus.UNKNOWN;
+                        long seq = recorder.record(run.id(), cut == StepStatus.UNKNOWN ? EventType.STEP_OUTCOME_UNKNOWN
+                                : EventType.STEP_FAILED, ref, details("code", HttpStepExecutor.DEADLINE_EXCEEDED,
+                                        "status", cut.name(), "recovered", true), null);
+                        rows.finishStep(run.id(), st.stepId(), cut, st.attempts(), null, null,
+                                HttpStepExecutor.DEADLINE_EXCEEDED, "Run deadline passed while the node was down",
+                                false, seq);
+                        rows.stop(run.id(), DEADLINE, RUN_TIMEOUT, "Run deadline reached", null);
+                    } else if (idempotent) {
+                        rows.resetStep(run.id(), st.stepId());
+                    } else {
+                        long seq = recorder.record(run.id(), EventType.STEP_OUTCOME_UNKNOWN, ref,
+                                details("code", STEP_OUTCOME_UNKNOWN, "recovered", true), null);
+                        rows.finishStep(run.id(), st.stepId(), StepStatus.UNKNOWN, st.attempts(), null, null,
+                                STEP_OUTCOME_UNKNOWN, "Outcome lost with node " + previousOwner, false, seq);
+                        rows.stop(run.id(), "FAIL_RUN", STEP_OUTCOME_UNKNOWN,
+                                "Step " + st.stepId() + " may have run; resolve it before resuming", st.stepId());
+                        log.error("step outcome unknown – manual resolution required runId={} stepId={}", run.id(),
+                                st.stepId());
+                    }
+                }
+                return left;
+            });
+        } catch (LeaseLostException e) {
+            metrics.leaseLost();
+            return;
+        } catch (RuntimeException e) {
+            // lock failures were already retried; waking it again would only repeat the failure every sweep
+            log.error("recovery failed runId={}; released without a wake-up for an operator", lease.runId(), e);
+            try {
+                leases.release(lease, false);
+            } catch (RuntimeException releaseFailed) {
+                log.error("release failed runId={}", lease.runId(), releaseFailed);
+            }
+            return;
+        }
+        if (remaining == null) {
+            return;
+        }
+        if (remaining != Long.MAX_VALUE && remaining > 0) {
+            deadlines.schedule(lease.runId(), remaining, () -> deadlineReached(lease));
+        }
+        advance(lease);
     }
 
     /** The segment timer fired (US-5.1): persist the stop, then let {@code advance} cancel and finalize. */
