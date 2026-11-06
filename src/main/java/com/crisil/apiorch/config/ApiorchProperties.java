@@ -1,6 +1,7 @@
 package com.crisil.apiorch.config;
 
 import java.util.List;
+import java.util.Map;
 
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
@@ -32,7 +33,15 @@ public record ApiorchProperties(
         @Valid @DefaultValue Lease lease,
         @Valid @DefaultValue Engine engine,
         @Valid @DefaultValue Executor executor,
-        @Valid @DefaultValue Logging logging) {
+        @Valid @DefaultValue Logging logging,
+        @Valid @DefaultValue Context context) {
+
+    /**
+     * US-7.6: master keys for {@code run_context}, by key id, each an {@code env:} or {@code file:} reference to a
+     * base64 32-byte value; new data uses {@code activeKid}. Without keys only the {@code local} profile starts.
+     */
+    public record Context(@DefaultValue Map<String, @NotBlank String> encryptionKeys, String activeKid) {
+    }
 
     /** US-7.2, US-7.3: what attempt rows keep, and what is always masked. */
     public record Logging(
@@ -64,7 +73,8 @@ public record ApiorchProperties(
             @DefaultValue("30000") @Min(0) long maxSyncWaitMs,
             @DefaultValue("60000") @Min(1000) long defaultRunTimeoutMs,
             @DefaultValue("false") boolean allowVersionOverride,
-            @DefaultValue("5242880") @Min(1024) long maxResponseBytes) {
+            @DefaultValue("5242880") @Min(1024) long maxResponseBytes,
+            @DefaultValue("10") @Min(1) @Max(200) int maxParallelSteps) {
     }
 
     /** US-5.5. Lease arithmetic uses database time. */

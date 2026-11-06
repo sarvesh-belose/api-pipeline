@@ -2,11 +2,13 @@ package com.crisil.apiorch.run;
 
 import java.time.Duration;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
@@ -35,8 +37,8 @@ public class RunService {
 
     private static final Logger log = LoggerFactory.getLogger(RunService.class);
 
-    /** A started run and, for sync mode, the waiter's future. */
-    public record Started(UUID runId, int version, CompletableFuture<Boolean> done) {
+    /** A started run and, for sync mode, the waiter's future; {@code replayed} for an idempotent replay (US-4.7). */
+    public record Started(UUID runId, int version, CompletableFuture<Boolean> done, boolean replayed) {
     }
 
     private final PublishedPipelines pipelines;
@@ -46,12 +48,15 @@ public class RunService {
     private final JdbcRunLeaseService leases;
     private final ActivityRecorder recorder;
     private final RunCoordinator coordinator;
+    private final CallerExchangeLog exchanges;
+    private final IdempotencyService idempotency;
     private final TransactionTemplate tx;
     private final ApiorchProperties.Run settings;
 
     public RunService(PublishedPipelines pipelines, InputValidator inputValidator, RunCompletionNotifier notifier,
             RunRows rows, JdbcRunLeaseService leases, ActivityRecorder recorder, RunCoordinator coordinator,
-            TransactionTemplate tx, ApiorchProperties properties) {
+            CallerExchangeLog exchanges, IdempotencyService idempotency, TransactionTemplate tx,
+            ApiorchProperties properties) {
         this.pipelines = pipelines;
         this.inputValidator = inputValidator;
         this.notifier = notifier;
@@ -59,12 +64,26 @@ public class RunService {
         this.leases = leases;
         this.recorder = recorder;
         this.coordinator = coordinator;
+        this.exchanges = exchanges;
+        this.idempotency = idempotency;
         this.tx = tx;
         this.settings = properties.run();
     }
 
+    /** The caller's request as received, for the exchange log (US-7.7); {@code bytes} is the true body size. */
+    public record Inbound(Map<String, String> headers, long bytes) {
+    }
+
     public Started start(String code, Integer requestedVersion, JsonNode input, boolean sync, String correlationId,
-            Authentication caller) {
+            Inbound inbound, String idempotencyKey, Authentication caller) {
+        String key = IdempotencyService.validate(idempotencyKey);
+        String hash = key == null ? null : IdempotencyService.hash(input);
+        if (key != null) {
+            Optional<IdempotencyService.Existing> existing = idempotency.find(code, caller.getName(), key);
+            if (existing.isPresent()) {
+                return replay(idempotency.replayOrReject(existing.get(), hash, key), code, sync);
+            }
+        }
         int version = resolveVersion(code, requestedVersion, caller);
         CompiledPipeline pipeline = pipelines.compiled(code, version);
         inputValidator.check(pipeline, input);
@@ -76,14 +95,24 @@ public class RunService {
         try {
             tx.executeWithoutResult(s -> {
                 rows.insertRun(runId, code, version, mode, correlationId, caller.getName(), leases.instanceId(),
-                        leases.leaseMs());
+                        leases.leaseMs(), key, hash);
                 for (CompiledStep step : pipeline.steps()) {
                     rows.insertStep(runId, step.id(), step.definition().effectiveMode().name());
                 }
                 rows.putContext(runId, "input", input);
                 recorder.record(runId, EventType.RUN_ACCEPTED, null, Map.of("mode", mode, "version", version,
-                        "inputBytes", input.toString().length()), null);
+                        "inputBytes", inbound.bytes()), null);
+                exchanges.inbound(runId, code, version, inbound.headers(), input, inbound.bytes());
             });
+        } catch (DataIntegrityViolationException e) {
+            notifier.cancel(runId);
+            Optional<IdempotencyService.Existing> winner = key == null ? Optional.empty()
+                    : idempotency.find(code, caller.getName(), key);
+            if (winner.isEmpty()) {
+                throw e;
+            }
+            // AC5: a concurrent request with the same key created the run first
+            return replay(idempotency.replayOrReject(winner.get(), hash, key), code, sync);
         } catch (RuntimeException e) {
             notifier.cancel(runId);
             throw e;
@@ -96,7 +125,24 @@ public class RunService {
             log.error("run hand-off failed runId={}; released for recovery", runId, e);
             leases.release(lease, true);
         }
-        return new Started(runId, version, done);
+        return new Started(runId, version, done, false);
+    }
+
+    /**
+     * The existing run for a replay (AC1, AC2, AC6): sync mode waits on it like the original request, finishing at
+     * once when it is already done for the caller.
+     */
+    private Started replay(IdempotencyService.Existing existing, String code, boolean sync) {
+        UUID runId = existing.runId();
+        if (!sync) {
+            return new Started(runId, existing.version(), CompletableFuture.completedFuture(false), true);
+        }
+        CompletableFuture<Boolean> done = notifier.register(runId,
+                syncWait(pipelines.compiled(code, existing.version())));
+        if (rows.run(runId).map(r -> r.status().doneForCaller()).orElse(true)) {
+            notifier.notifyDone(runId);
+        }
+        return new Started(runId, existing.version(), done, true);
     }
 
     private int resolveVersion(String code, Integer requested, Authentication caller) {

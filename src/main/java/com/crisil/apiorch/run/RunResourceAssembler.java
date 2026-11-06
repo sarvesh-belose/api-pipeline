@@ -59,13 +59,28 @@ public class RunResourceAssembler {
             steps.add(new RunResource.Step(s.stepId(), s.status().name(), s.attempts(), s.httpStatus(), s.durationMs(),
                     s.fallbackApplied(), s.skipReason()));
             if (s.status() == StepStatus.FAILED || s.fallbackApplied()) {
-                errors.add(new RunResource.Error(s.stepId(), s.errorCode(), s.errorMessage(), s.httpStatus()));
+                errors.add(new RunResource.Error(s.stepId(), s.errorCode(), s.errorMessage(), s.httpStatus(),
+                        s.fallbackApplied() ? Boolean.TRUE : null));
+            } else if (s.status() == StepStatus.UNKNOWN) {
+                errors.add(new RunResource.Error(s.stepId(), "STEP_OUTCOME_UNKNOWN", s.errorMessage(), null, null));
+            } else if (s.status() == StepStatus.CANCELLED) {
+                errors.add(new RunResource.Error(s.stepId(), "CANCELLED", null, null, null));
             }
         }
-        if (run.errorCode() != null && errors.stream().noneMatch(e -> run.errorCode().equals(e.code()))) {
-            errors.add(new RunResource.Error(run.errorStepId(), run.errorCode(), run.errorMessage(), null));
+        // STEP_FAILED is already described by the failed step's own entry (US-4.6 AC1)
+        if (run.errorCode() != null && !run.errorCode().equals(RunCoordinator.STEP_FAILED)
+                && errors.stream().noneMatch(e -> run.errorCode().equals(e.code()))) {
+            errors.add(new RunResource.Error(run.errorStepId(), run.errorCode(), run.errorMessage(), null, null));
         }
-        JsonNode output = run.status().doneForCaller() ? rows.context(runId).get("output") : null;
+        JsonNode output = null;
+        if (run.status().doneForCaller()) {
+            try {
+                output = rows.context(runId).get("output");
+            } catch (com.crisil.apiorch.persistence.ContextCipher.DecryptionException e) {
+                // logged where the run failed; the resource is still served, without output (US-7.6 AC4)
+                output = null;
+            }
+        }
         Long durationMs = run.startedAt() != null && run.endedAt() != null
                 ? Duration.between(run.startedAt(), run.endedAt()).toMillis() : null;
         return new RunResource(run.id(), run.pipelineCode(), run.pipelineVersion(), run.status().name(), run.mode(),

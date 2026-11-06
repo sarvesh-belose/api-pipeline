@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.MissingNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import com.crisil.apiorch.definition.CompiledPipeline;
@@ -78,8 +79,45 @@ class RunDecisionTest {
         RunDecision.Next next = RunDecision.decide(p, states(p, Map.of("api1", done("api1"),
                 "api2", StepState.failed("api2", false))));
         assertThat(next.skip()).extracting(RunDecision.Skip::stepId).containsExactly("api3", "api4", "api5");
-        assertThat(next.skip()).extracting(RunDecision.Skip::reason).containsOnly("DEPENDENCY_NOT_SUCCEEDED");
+        assertThat(next.skip()).extracting(RunDecision.Skip::reason).containsOnly("DEPENDENCY_FAILED");
         assertThat(next.finalStatus()).isEqualTo(RunStatus.COMPLETED_WITH_ERRORS);
+    }
+
+    @Test
+    void diamondJoinsAndRootsStartTogetherInListOrder() {
+        ObjectNode doc = TestPipelines.sequential("DAG_D", "r2", "r1", "b", "c", "j");
+        ArrayNode steps = doc.withArray("steps");
+        ((ObjectNode) steps.get(0)).putArray("dependsOn");
+        ((ObjectNode) steps.get(1)).putArray("dependsOn");
+        ((ObjectNode) steps.get(2)).putArray("dependsOn").add("r1");
+        ((ObjectNode) steps.get(3)).putArray("dependsOn").add("r1");
+        ((ObjectNode) steps.get(4)).putArray("dependsOn").add("b").add("c");
+        CompiledPipeline p = compile(doc);
+        assertThat(RunDecision.decide(p, states(p, Map.of())).ready()).extracting(CompiledStep::id)
+                .containsExactly("r2", "r1");
+        assertThat(RunDecision.decide(p, states(p, Map.of("r1", done("r1"), "r2", done("r2"), "b", done("b"),
+                "c", new StepState("c", StepStatus.RUNNING, 1, false)))).ready()).isEmpty();
+        assertThat(RunDecision.decide(p, states(p, Map.of("r1", done("r1"), "r2", done("r2"), "b", done("b"),
+                "c", done("c")))).ready()).extracting(CompiledStep::id).containsExactly("j");
+        assertThat(p.ancestors("j")).containsExactlyInAnyOrder("b", "c", "r1");
+    }
+
+    @Test
+    void aFailedDependencySkipsTransitivelyNamingIt() {
+        ObjectNode doc = TestPipelines.sequential("DAG_S", "a", "b", "c", "d");
+        ((ObjectNode) doc.withArray("steps").get(2)).putArray("dependsOn").add("a");
+        CompiledPipeline p = compile(doc);
+        RunDecision.Next next = RunDecision.decide(p, states(p, Map.of("a", done("a"),
+                "b", StepState.failed("b", false), "c", new StepState("c", StepStatus.RUNNING, 1, false))));
+        assertThat(next.skip()).isEmpty();
+        next = RunDecision.decide(p, states(p, Map.of("a", done("a"), "b", StepState.failed("b", false),
+                "c", new StepState("c", StepStatus.UNKNOWN, 1, false))));
+        assertThat(next.skip()).containsExactly(new RunDecision.Skip("d", "DEPENDENCY_FAILED", "c"));
+        doc = TestPipelines.sequential("DAG_T", "a", "b", "c");
+        p = compile(doc);
+        assertThat(RunDecision.decide(p, states(p, Map.of("a", StepState.failed("a", false)))).skip())
+                .containsExactly(new RunDecision.Skip("b", "DEPENDENCY_FAILED", "a"),
+                        new RunDecision.Skip("c", "DEPENDENCY_FAILED", "b"));
     }
 
     @Test

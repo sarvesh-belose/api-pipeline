@@ -12,3 +12,10 @@ spring:
 springdoc:
   api-docs.enabled: false
   swagger-ui.enabled: false
+apiorch:
+  context:
+    # US-7.6: base64 32-byte master keys by reference. Rotate by adding k2 and switching active-kid; keep k1 while
+    # the startup report still counts rows on it.
+    encryption-keys:
+      k1: env:APIORCH_SECRET_CTX_K1
+    active-kid: k1

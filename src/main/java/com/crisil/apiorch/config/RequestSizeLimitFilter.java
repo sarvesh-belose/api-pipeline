@@ -39,6 +39,9 @@ import com.crisil.apiorch.observability.Problems;
 @Order(Ordered.HIGHEST_PRECEDENCE + 10)
 public class RequestSizeLimitFilter extends OncePerRequestFilter {
 
+    /** Request attribute: the body bytes read so far on a limited path (the true size, US-7.7 AC1). */
+    public static final String BODY_BYTES = "apiorch.bodyBytes";
+
     private final AntPathMatcher matcher = new AntPathMatcher();
     private final Map<String, Long> limits = new LinkedHashMap<>();
     private final ObjectMapper objectMapper;
@@ -87,7 +90,7 @@ public class RequestSizeLimitFilter extends OncePerRequestFilter {
     private static final class LimitedRequest extends HttpServletRequestWrapper {
 
         private final long limit;
-        private ServletInputStream stream;
+        private CountingInputStream stream;
 
         LimitedRequest(HttpServletRequest request, long limit) {
             super(request);
@@ -100,6 +103,14 @@ public class RequestSizeLimitFilter extends OncePerRequestFilter {
                 stream = new CountingInputStream(super.getInputStream(), limit);
             }
             return stream;
+        }
+
+        @Override
+        public Object getAttribute(String name) {
+            if (BODY_BYTES.equals(name)) {
+                return stream == null ? null : stream.count();
+            }
+            return super.getAttribute(name);
         }
 
         @Override
@@ -137,6 +148,10 @@ public class RequestSizeLimitFilter extends OncePerRequestFilter {
                 add(n);
             }
             return n;
+        }
+
+        long count() {
+            return count;
         }
 
         private void add(long n) throws PayloadTooLargeException {

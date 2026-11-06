@@ -24,9 +24,8 @@ import com.crisil.apiorch.config.ApiorchProperties;
 import com.crisil.apiorch.config.ExecutorConfig;
 import com.crisil.apiorch.definition.CompiledPipeline;
 import com.crisil.apiorch.definition.CompiledStep;
-import com.crisil.apiorch.definition.PipelineDefinition;
-import com.crisil.apiorch.definition.PipelineDefinition.Capture;
 import com.crisil.apiorch.definition.StepDefinition.OnFailure;
+import com.crisil.apiorch.engine.FailurePolicyApplier;
 import com.crisil.apiorch.engine.Lease;
 import com.crisil.apiorch.engine.LeaseLostException;
 import com.crisil.apiorch.engine.RunContext;
@@ -42,11 +41,16 @@ import com.crisil.apiorch.observability.ApiorchMetrics;
 import com.crisil.apiorch.observability.ActivityRecorder.StepRef;
 import com.crisil.apiorch.observability.AttemptRecord;
 import com.crisil.apiorch.observability.AttemptWriter;
-import com.crisil.apiorch.observability.MaskingPolicy;
-import com.crisil.apiorch.http.EndpointClientRegistry;
+import com.crisil.apiorch.observability.CaptureSettings;
 import com.crisil.apiorch.observability.EventType;
 import com.crisil.apiorch.observability.MdcSupport;
+import com.crisil.apiorch.persistence.ContextCipher;
 import com.crisil.apiorch.persistence.RunRows;
+import com.crisil.apiorch.definition.PipelineDefinition;
+import com.crisil.apiorch.http.EndpointClientRegistry;
+import com.crisil.apiorch.http.RetryClassifier;
+import com.crisil.apiorch.http.RetryPolicy;
+import com.crisil.apiorch.step.HttpStepExecutor;
 import com.crisil.apiorch.step.StepAttempt;
 import com.crisil.apiorch.step.StepExecutor;
 import com.crisil.apiorch.step.StepInvocation;
@@ -64,6 +68,13 @@ public class RunCoordinator {
 
     private static final Logger log = LoggerFactory.getLogger(RunCoordinator.class);
 
+    static final String STEP_FAILED = "STEP_FAILED";
+    static final String DEADLINE = "DEADLINE";
+    static final String STEP_OUTCOME_UNKNOWN = "STEP_OUTCOME_UNKNOWN";
+    static final int LOCK_RETRIES = 5;
+    static final String RUN_TIMEOUT = "RUN_TIMEOUT";
+    static final String OUTPUT_EXPRESSION_ERROR = "OUTPUT_EXPRESSION_ERROR";
+
     private final TransactionTemplate tx;
     private final RunRows rows;
     private final RunLeaseService leases;
@@ -74,17 +85,22 @@ public class RunCoordinator {
     private final RunCompletionNotifier notifier;
     private final ExpressionEvaluator evaluator;
     private final AttemptWriter attempts;
-    private final EndpointClientRegistry endpoints;
-    private final ApiorchProperties.Logging logging;
+    private final CapturePolicies captures;
     private final ApiorchMetrics metrics;
+    private final CallerExchangeLog exchanges;
+    private final DeadlineTimers deadlines;
+    private final RetryTimers retries;
+    private final EndpointClientRegistry endpoints;
     private final Clock clock;
     private final long defaultRunTimeoutMs;
+    private final int maxParallelSteps;
 
     public RunCoordinator(TransactionTemplate tx, RunRows rows, RunLeaseService leases, ActivityRecorder recorder,
             PublishedPipelines pipelines, StepExecutor executor,
             @Qualifier(ExecutorConfig.STEP_IO) ThreadPoolTaskExecutor stepIo, RunCompletionNotifier notifier,
-            ExpressionEvaluator evaluator, AttemptWriter attempts, EndpointClientRegistry endpoints,
-            ApiorchMetrics metrics, Clock clock, ApiorchProperties properties) {
+            ExpressionEvaluator evaluator, AttemptWriter attempts, CapturePolicies captures,
+            ApiorchMetrics metrics, CallerExchangeLog exchanges, DeadlineTimers deadlines, RetryTimers retries,
+            EndpointClientRegistry endpoints, Clock clock, ApiorchProperties properties) {
         this.tx = tx;
         this.rows = rows;
         this.leases = leases;
@@ -95,16 +111,20 @@ public class RunCoordinator {
         this.notifier = notifier;
         this.evaluator = evaluator;
         this.attempts = attempts;
-        this.endpoints = endpoints;
-        this.logging = properties.logging();
+        this.captures = captures;
         this.metrics = metrics;
+        this.exchanges = exchanges;
+        this.deadlines = deadlines;
+        this.retries = retries;
+        this.endpoints = endpoints;
         this.clock = clock;
         this.defaultRunTimeoutMs = properties.run().defaultRunTimeoutMs();
+        this.maxParallelSteps = properties.run().maxParallelSteps();
     }
 
     /** {@code ACCEPTED → RUNNING} with {@code RUN_STARTED}, then the first {@link #advance}. */
     public void start(Lease lease) {
-        tx.executeWithoutResult(s -> {
+        inTx(s -> {
             leases.lockFenced(lease);
             RunRows.Run run = rows.run(lease.runId()).orElseThrow();
             CompiledPipeline pipeline = pipelines.compiled(run.pipelineCode(), run.pipelineVersion());
@@ -112,6 +132,13 @@ public class RunCoordinator {
                     : defaultRunTimeoutMs;
             rows.markRunning(lease.runId(), timeout);
             recorder.record(lease.runId(), EventType.RUN_STARTED, null, Map.of("runTimeoutMs", timeout), null);
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    deadlines.schedule(lease.runId(), timeout, () -> deadlineReached(lease));
+                }
+            });
+            return null;
         });
         advance(lease);
     }
@@ -120,10 +147,17 @@ public class RunCoordinator {
     public void advance(Lease lease) {
         List<StepInvocation> scheduled;
         try {
-            scheduled = tx.execute(s -> schedule(lease));
+            scheduled = inTx(s -> schedule(lease));
+        } catch (ContextCipher.DecryptionException e) {
+            log.error("run context failed to decrypt runId={}; failing the run", lease.runId(), e);
+            failUnreadable(lease, e);
+            return;
         } catch (LeaseLostException e) {
             log.warn("lease lost runId={} epoch={}", lease.runId(), lease.epoch());
             metrics.leaseLost();
+            return;
+        } catch (RuntimeException e) {
+            releaseForRecovery(lease, "advance", e);
             return;
         }
         for (StepInvocation invocation : scheduled) {
@@ -145,7 +179,14 @@ public class RunCoordinator {
                     && pipeline.step(step.stepId()).definition().effectiveOnFailure() == OnFailure.FAIL_RUN;
             states.put(step.stepId(), new StepState(step.stepId(), step.status(), step.execNo(), stops));
         }
-        RunDecision.Next next = RunDecision.decide(pipeline, states);
+        String stopReason = run.stopReason();
+        long remaining = rows.remainingMs(run.id()).orElse(Long.MAX_VALUE);
+        if (stopReason == null && remaining <= 0) {
+            // the timer may be lost (another node, a restart): advance enforces the deadline itself
+            rows.stop(run.id(), DEADLINE, RUN_TIMEOUT, "Run deadline reached", null);
+            stopReason = DEADLINE;
+        }
+        RunDecision.Next next = RunDecision.decide(pipeline, states, stopReason != null);
         for (RunDecision.Skip skip : next.skip()) {
             if (skip.reason().equals("RUN_STOPPED")) {
                 rows.cancelStep(run.id(), skip.stepId());
@@ -153,27 +194,44 @@ public class RunCoordinator {
                 rows.skipStep(run.id(), skip.stepId(), skip.reason());
             }
             recorder.record(run.id(), EventType.STEP_SKIPPED, StepRef.of(skip.stepId(), 1),
-                    Map.of("reason", skip.reason()), null);
+                    details("reason", skip.reason(), "dependency", skip.dependency()), null);
+            if (skip.dependency() != null) {
+                log.info("step skipped stepId={} reason={} dependency={}", skip.stepId(), skip.reason(),
+                        skip.dependency());
+            }
         }
         if (next.quiescent()) {
             boolean degraded = steps.stream().anyMatch(RunRows.Step::fallbackApplied);
             RunStatus status = next.finalStatus() == RunStatus.COMPLETED && degraded
                     ? RunStatus.COMPLETED_WITH_ERRORS : next.finalStatus();
+            if (DEADLINE.equals(stopReason)) {
+                // US-5.1 AC3: a normal segment past its deadline (post-completion segments come with US-6.3)
+                status = RunStatus.TIMED_OUT;
+            }
             finish(run, pipeline, status, steps.size());
             return List.of();
         }
-        if (next.ready().isEmpty()) {
+        // AC4: at most max-parallel-steps in flight; each completion advances and submits the next
+        long inFlight = steps.stream().filter(st -> st.status() == StepStatus.RUNNING).count();
+        List<CompiledStep> ready = next.ready().stream()
+                .limit(Math.max(0, maxParallelSteps - inFlight)).toList();
+        log.debug("ready set computed ready={} skipped={} inFlight={}", next.ready().stream().map(CompiledStep::id)
+                .toList(), next.skip().stream().map(RunDecision.Skip::stepId).toList(), inFlight);
+        if (ready.isEmpty()) {
             return List.of();
         }
         ObjectNode context = context(run);
+        Instant deadline = remaining == Long.MAX_VALUE ? null : Instant.now(clock).plusMillis(remaining);
         List<StepInvocation> out = new ArrayList<>();
-        for (CompiledStep step : next.ready()) {
+        for (CompiledStep step : ready) {
             rows.markStepRunning(run.id(), step.id());
             recorder.record(run.id(), EventType.STEP_SCHEDULED, StepRef.of(step.id(), 1), Map.of("stepId", step.id(),
                     "execNo", 1, "endpoint", step.definition().endpoint(), "mode", step.definition().effectiveMode().name()),
                     null);
+            Integer stepTimeout = step.definition().timeoutMs() != null ? step.definition().timeoutMs()
+                    : pipeline.definition().defaults() != null ? pipeline.definition().defaults().timeoutMs() : null;
             out.add(new StepInvocation(lease, run.pipelineCode(), run.pipelineVersion(), run.correlationId(), step, 1,
-                    context, null));
+                    snapshot(context, pipeline, step), deadline, stepTimeout, 1));
         }
         return out;
     }
@@ -182,7 +240,7 @@ public class RunCoordinator {
         StepOutcome outcome;
         try (MdcSupport.Scope runScope = MdcSupport.withRun(invocation.runId(), invocation.pipeline(),
                 invocation.version(), invocation.correlationId());
-                MdcSupport.Scope stepScope = MdcSupport.withStep(invocation.step().id(), 1)) {
+                MdcSupport.Scope stepScope = MdcSupport.withStep(invocation.step().id(), invocation.attemptNo())) {
             try {
                 outcome = executor.execute(invocation);
             } catch (LeaseLostException e) {
@@ -194,19 +252,139 @@ public class RunCoordinator {
                 log.error("step executor failed unexpectedly", e);
                 outcome = StepOutcome.failed(null, "INTERNAL_ERROR", "Step execution failed unexpectedly", 0, 0);
             }
-            complete(invocation, outcome);
+            if (!retry(invocation, outcome)) {
+                complete(invocation, outcome);
+            }
         }
+    }
+
+    /**
+     * US-5.2: a retryable failure with attempts left is stored now (its attempt row with {@code next_retry_delay_ms},
+     * {@code ATTEMPT_FAILED} and {@code RETRY_SCHEDULED}, in one fenced transaction), and the next attempt is handed to
+     * {@code step-io} after the delay, so nothing waits. The delay is capped by the segment budget; an attempt due
+     * with too little budget left is not sent (US-5.1). Returns {@code false} when the outcome is final.
+     */
+    private boolean retry(StepInvocation invocation, StepOutcome outcome) {
+        if (outcome.status() == StepOutcome.Status.SUCCEEDED) {
+            return false;
+        }
+        CompiledStep step = invocation.step();
+        RetryPolicy policy = retryPolicy(invocation);
+        if (invocation.attemptNo() >= policy.maxAttempts()) {
+            return false;
+        }
+        String reason = RetryClassifier.reason(outcome.errorCode(), outcome.httpStatus(),
+                step.definition().effectiveIdempotent(), policy.retryOn());
+        if (reason == null) {
+            return false;
+        }
+        Instant now = Instant.now(clock);
+        Long retryAfter = outcome.httpStatus() != null && (outcome.httpStatus() == 429 || outcome.httpStatus() == 503)
+                ? RetryPolicy.retryAfterMs(header(outcome.headers(), "Retry-After"), now) : null;
+        long computed = policy.delayMs(invocation.attemptNo(), retryAfter,
+                java.util.concurrent.ThreadLocalRandom.current());
+        long delay = invocation.deadline() == null ? computed
+                : Math.min(computed, Math.max(0, java.time.Duration.between(now, invocation.deadline()).toMillis()));
+        StepOutcome stored = outcome.withTrail(outcome.trail().stream().map(a -> new StepAttempt(
+                a.record().withNextRetryDelay(delay), a.responseReceived(), a.tokenRefreshes())).toList());
+        Lease lease = invocation.lease();
+        try {
+            inTx(s -> {
+                leases.lockFenced(lease);
+                storeAttempts(invocation, stored);
+                StepRef ref = StepRef.attempt(step.id(), invocation.execNo(), invocation.attemptNo());
+                recorder.record(invocation.runId(), EventType.ATTEMPT_FAILED, ref, details("attempt",
+                        invocation.attemptNo(), "outcome", outcome.errorCode(), "httpStatus", outcome.httpStatus()), null);
+                recorder.record(invocation.runId(), EventType.RETRY_SCHEDULED, ref, details("attempt",
+                        invocation.attemptNo() + 1, "delayMs", delay, "reason", reason), null);
+                return null;
+            });
+        } catch (LeaseLostException e) {
+            log.warn("lease lost runId={} epoch={}; {} not retried", lease.runId(), lease.epoch(), step.id());
+            metrics.leaseLost();
+            return true;
+        } catch (RuntimeException e) {
+            releaseForRecovery(lease, "recording a retry of " + step.id(), e);
+            return true;
+        }
+        for (StepAttempt attempt : stored.trail()) {
+            metrics.attempt(attempt.record().endpointName(), attempt.record().outcome(), attempt.record().requestBytes(),
+                    attempt.record().responseBytes());
+        }
+        metrics.retryScheduled(step.definition().endpoint(), reason);
+        log.warn("attempt failed attempt={} outcome={} httpStatus={}", invocation.attemptNo(), outcome.errorCode(),
+                outcome.httpStatus());
+        log.info("retry scheduled attempt={} delayMs={} reason={}", invocation.attemptNo() + 1, delay, reason);
+        retries.schedule(delay, () -> stepIo.execute(() -> runRetry(invocation, outcome)));
+        return true;
+    }
+
+    /** A retry that comes due after the run stopped is not sent; the last failure is the step's outcome. */
+    private void runRetry(StepInvocation previous, StepOutcome lastFailure) {
+        boolean stopped;
+        try {
+            stopped = Boolean.TRUE.equals(inTx(s -> {
+                leases.lockFenced(previous.lease());
+                RunRows.Run run = rows.run(previous.runId()).orElseThrow();
+                return run.stopReason() != null || run.status().terminal();
+            }));
+        } catch (LeaseLostException e) {
+            metrics.leaseLost();
+            return;
+        } catch (RuntimeException e) {
+            releaseForRecovery(previous.lease(), "checking a retry of " + previous.step().id(), e);
+            return;
+        }
+        if (stopped) {
+            // its attempt row is already stored
+            complete(previous, lastFailure.withTrail(List.of()));
+        } else {
+            run(previous.nextAttempt());
+        }
+    }
+
+    private RetryPolicy retryPolicy(StepInvocation invocation) {
+        PipelineDefinition definition = pipelines.compiled(invocation.pipeline(), invocation.version()).definition();
+        return RetryPolicy.resolve(invocation.step().definition().retry(),
+                definition.defaults() != null ? definition.defaults().retry() : null,
+                endpoints.get(invocation.step().definition().endpoint()).map(r -> r.config().retry()).orElse(null));
+    }
+
+    private static String header(JsonNode headers, String name) {
+        if (headers == null) {
+            return null;
+        }
+        java.util.Iterator<Map.Entry<String, JsonNode>> it = headers.fields();
+        while (it.hasNext()) {
+            Map.Entry<String, JsonNode> e = it.next();
+            if (e.getKey().equalsIgnoreCase(name)) {
+                return e.getValue().asText();
+            }
+        }
+        return null;
+    }
+
+    /** Attempts of this execution so far: earlier retries plus what this outcome made (0 if nothing was sent). */
+    private static int attempts(StepInvocation invocation, StepOutcome outcome) {
+        return invocation.attemptNo() - 1 + outcome.attempts();
     }
 
     /** Records one step's outcome under the lease, then advances the run. */
     void complete(StepInvocation invocation, StepOutcome outcome) {
         Lease lease = invocation.lease();
         try {
-            tx.executeWithoutResult(s -> record(invocation, outcome));
+            inTx(s -> {
+                record(invocation, outcome);
+                return null;
+            });
         } catch (LeaseLostException e) {
             log.warn("lease lost runId={} epoch={}; discarding the result of {}", lease.runId(), lease.epoch(),
                     invocation.step().id());
             metrics.leaseLost();
+            return;
+        } catch (RuntimeException e) {
+            // the step stays RUNNING; recovery (US-5.5) decides from its idempotency whether to send it again
+            releaseForRecovery(lease, "recording " + invocation.step().id(), e);
             return;
         }
         metrics.stepFinished(invocation.pipeline(), invocation.step().id(), invocation.step().definition().endpoint(),
@@ -228,27 +406,42 @@ public class RunCoordinator {
         if (outcome.status() == StepOutcome.Status.SUCCEEDED) {
             rows.putContext(runId, step.id(), RunContext.stepResult(outcome.httpStatus(), outcome.headers(),
                     outcome.body()));
-            long seq = recorder.record(runId, EventType.STEP_SUCCEEDED, ref, details("attempts", outcome.attempts(),
+            long seq = recorder.record(runId, EventType.STEP_SUCCEEDED, ref, details("attempts",
+                    attempts(invocation, outcome),
                     "durationMs", outcome.durationMs(), "httpStatus", outcome.httpStatus()), null);
-            rows.finishStep(runId, step.id(), StepStatus.SUCCEEDED, outcome.attempts(), outcome.httpStatus(),
-                    outcome.durationMs(), null, null, false, seq);
+            rows.finishStep(runId, step.id(), StepStatus.SUCCEEDED, attempts(invocation, outcome),
+                    outcome.httpStatus(), outcome.durationMs(), null, null, false, seq);
+            return;
+        }
+        if (HttpStepExecutor.DEADLINE_EXCEEDED.equals(outcome.errorCode())) {
+            recordDeadlineCut(invocation, outcome, ref);
             return;
         }
         OnFailure policy = step.definition().effectiveOnFailure();
         long seq = recorder.record(runId, EventType.STEP_FAILED, ref, details("code", outcome.errorCode(),
                 "message", outcome.errorMessage(), "httpStatus", outcome.httpStatus(), "policy", policy.name()), null);
-        if (policy == OnFailure.FALLBACK && step.fallback() != null && applyFallback(invocation, outcome)) {
+        FailurePolicyApplier.PolicyOutcome applied = FailurePolicyApplier.apply(step, invocation.context(),
+                new FailurePolicyApplier.Failure(outcome.errorCode(), outcome.errorMessage(), outcome.httpStatus()),
+                evaluator);
+        if (applied instanceof FailurePolicyApplier.FallbackApplied fallback) {
+            rows.putContext(runId, step.id(), RunContext.stepResult(null, null, fallback.body()));
             recorder.record(runId, EventType.STEP_FALLBACK_APPLIED, ref, Map.of("errorCode",
                     String.valueOf(outcome.errorCode())), null);
-            rows.finishStep(runId, step.id(), StepStatus.SUCCEEDED, outcome.attempts(), outcome.httpStatus(),
-                    outcome.durationMs(), outcome.errorCode(), outcome.errorMessage(), true, seq);
+            rows.finishStep(runId, step.id(), StepStatus.SUCCEEDED, attempts(invocation, outcome),
+                    outcome.httpStatus(), outcome.durationMs(), outcome.errorCode(), outcome.errorMessage(), true, seq);
+            log.info("fallback applied errorCode={}", outcome.errorCode());
             return;
         }
-        rows.finishStep(runId, step.id(), StepStatus.FAILED, outcome.attempts(), outcome.httpStatus(),
-                outcome.durationMs(), outcome.errorCode(), outcome.errorMessage(), false, seq);
-        if (policy != OnFailure.CONTINUE) {
-            rows.stop(runId, "FAIL_RUN", outcome.errorCode(), outcome.errorMessage(), step.id());
+        log.warn("step failed policy={} code={} httpStatus={}", policy, outcome.errorCode(), outcome.httpStatus());
+        if (applied instanceof FailurePolicyApplier.StopRun stop) {
+            rows.finishStep(runId, step.id(), StepStatus.FAILED, attempts(invocation, outcome),
+                    outcome.httpStatus(), outcome.durationMs(), stop.code(), stop.message(), false, seq);
+            // README §5.1 rule 7: the stop intent commits with the failure, so no node starts another step
+            rows.stop(runId, "FAIL_RUN", STEP_FAILED, stop.message(), step.id());
+            return;
         }
+        rows.finishStep(runId, step.id(), StepStatus.FAILED, attempts(invocation, outcome), outcome.httpStatus(),
+                outcome.durationMs(), outcome.errorCode(), outcome.errorMessage(), false, seq);
     }
 
     /**
@@ -259,16 +452,8 @@ public class RunCoordinator {
         if (outcome.trail().isEmpty()) {
             return;
         }
-        PipelineDefinition definition = pipelines.compiled(invocation.pipeline(), invocation.version()).definition();
-        PipelineDefinition.LoggingSpec stepLogging = invocation.step().definition().logging();
-        PipelineDefinition.LoggingSpec pipelineLogging = definition.logging();
-        Capture capture = stepLogging != null && stepLogging.capture() != null ? stepLogging.capture()
-                : pipelineLogging != null && pipelineLogging.capture() != null ? pipelineLogging.capture()
-                : logging.defaultCapture();
-        int maxBody = stepLogging != null && stepLogging.maxBodyBytes() != null ? stepLogging.maxBodyBytes()
-                : pipelineLogging != null && pipelineLogging.maxBodyBytes() != null ? pipelineLogging.maxBodyBytes()
-                : logging.defaultMaxBodyBytes();
-        MaskingPolicy policy = maskingPolicy(invocation.step(), pipelineLogging, stepLogging);
+        CaptureSettings settings = captures.forStep(
+                pipelines.compiled(invocation.pipeline(), invocation.version()).definition(), invocation.step());
         for (StepAttempt attempt : outcome.trail()) {
             AttemptRecord a = attempt.record();
             StepRef ref = StepRef.attempt(a.stepId(), a.execNo(), a.attemptNo());
@@ -280,41 +465,129 @@ public class RunCoordinator {
                         "durationMs", a.durationMs(), "requestBytes", a.requestBytes(), "responseBytes",
                         a.responseBytes()), null);
             }
-            attempts.write(a, capture, maxBody, policy);
+            attempts.write(a, settings.capture(), settings.maxBodyBytes(), settings.policy());
         }
     }
 
-    /** The global lists, the pipeline's and step's {@code maskKeys}, and the endpoint's API key header (US-7.3). */
-    private MaskingPolicy maskingPolicy(CompiledStep step, PipelineDefinition.LoggingSpec pipelineLogging,
-            PipelineDefinition.LoggingSpec stepLogging) {
-        List<String> headers = new ArrayList<>(logging.alwaysMaskHeaders());
-        endpoints.get(step.definition().endpoint()).map(r -> r.config().auth())
-                .filter(auth -> auth != null && auth.headerName() != null).ifPresent(auth -> headers.add(auth.headerName()));
-        List<String> keys = new ArrayList<>(logging.alwaysMaskKeys());
-        if (pipelineLogging != null && pipelineLogging.maskKeys() != null) {
-            keys.addAll(pipelineLogging.maskKeys());
-        }
-        if (stepLogging != null && stepLogging.maskKeys() != null) {
-            keys.addAll(stepLogging.maskKeys());
-        }
-        return MaskingPolicy.of(headers, keys);
+    /**
+     * US-5.1 AC3, AC4: an attempt cut by the deadline is never a step {@code TIMEOUT} and never re-sent. Not sent, or
+     * idempotent: {@code CANCELLED}; sent and not idempotent: {@code UNKNOWN}. Failure policies don't apply; the
+     * run stops with {@code DEADLINE}.
+     */
+    private void recordDeadlineCut(StepInvocation invocation, StepOutcome outcome, StepRef ref) {
+        java.util.UUID runId = invocation.runId();
+        CompiledStep step = invocation.step();
+        boolean sent = !outcome.trail().isEmpty();
+        StepStatus status = sent && !step.definition().effectiveIdempotent() ? StepStatus.UNKNOWN
+                : StepStatus.CANCELLED;
+        long seq = recorder.record(runId, status == StepStatus.UNKNOWN ? EventType.STEP_OUTCOME_UNKNOWN
+                : EventType.STEP_FAILED, ref, details("code", outcome.errorCode(), "status", status.name(),
+                        "sent", sent), null);
+        rows.finishStep(runId, step.id(), status, attempts(invocation, outcome), outcome.httpStatus(),
+                outcome.durationMs(),
+                outcome.errorCode(), outcome.errorMessage(), false, seq);
+        rows.stop(runId, DEADLINE, RUN_TIMEOUT, "Run deadline reached", null);
     }
 
-    /** {@code fallback} over the context plus {@code error}; its result becomes {@code steps.<id>.body} (US-4.6). */
-    private boolean applyFallback(StepInvocation invocation, StepOutcome outcome) {
-        ObjectNode ctx = invocation.context().deepCopy();
-        ObjectNode error = ctx.putObject("error");
-        error.put("code", outcome.errorCode()).put("message", outcome.errorMessage());
-        if (outcome.httpStatus() != null) {
-            error.put("httpStatus", outcome.httpStatus());
-        }
+    /**
+     * Continues a run this node just claimed (US-5.5) from its persisted state: {@code RUN_RECOVERED}; an orphan still
+     * {@code ACCEPTED} is started (AC6); steps found {@code RUNNING} are reconciled, because their outcome died with
+     * the other node. Past the deadline they are cut as in US-5.1 (idempotent {@code CANCELLED}, else
+     * {@code UNKNOWN}) and the run times out (AC7 of US-5.1); otherwise idempotent ones go back to {@code PENDING}
+     * and run again with the same {@code Idempotency-Key}, and the others become {@code UNKNOWN} and stop the run
+     * for an operator (AC2). A persisted stop is honoured by {@code advance}.
+     */
+    public void recover(Lease lease, String previousOwner) {
+        Long remaining;
         try {
-            JsonNode body = evaluator.evaluate(invocation.step().fallback(), ctx);
-            rows.putContext(invocation.runId(), invocation.step().id(), RunContext.stepResult(null, null, body));
-            return true;
-        } catch (ExpressionException e) {
-            log.warn("fallback expression failed code={}", e.code());
-            return false;
+            remaining = inTx(s -> {
+                leases.lockFenced(lease);
+                RunRows.Run run = rows.run(lease.runId()).orElseThrow();
+                if (run.status().terminal()) {
+                    return null;
+                }
+                recorder.record(run.id(), EventType.RUN_RECOVERED, null, details("previousOwner", previousOwner,
+                        "newOwner", lease.owner(), "epoch", lease.epoch()), null);
+                CompiledPipeline pipeline = pipelines.compiled(run.pipelineCode(), run.pipelineVersion());
+                if (run.status() == RunStatus.ACCEPTED) {
+                    long timeout = pipeline.definition().runTimeoutMs() != null ? pipeline.definition().runTimeoutMs()
+                            : defaultRunTimeoutMs;
+                    rows.markRunning(run.id(), timeout);
+                    recorder.record(run.id(), EventType.RUN_STARTED, null, Map.of("runTimeoutMs", timeout), null);
+                }
+                long left = rows.remainingMs(run.id()).orElse(Long.MAX_VALUE);
+                for (RunRows.Step st : rows.steps(run.id())) {
+                    if (st.status() != StepStatus.RUNNING) {
+                        continue;
+                    }
+                    boolean idempotent = pipeline.step(st.stepId()).definition().effectiveIdempotent();
+                    StepRef ref = StepRef.of(st.stepId(), st.execNo());
+                    if (left <= 0) {
+                        StepStatus cut = idempotent ? StepStatus.CANCELLED : StepStatus.UNKNOWN;
+                        long seq = recorder.record(run.id(), cut == StepStatus.UNKNOWN ? EventType.STEP_OUTCOME_UNKNOWN
+                                : EventType.STEP_FAILED, ref, details("code", HttpStepExecutor.DEADLINE_EXCEEDED,
+                                        "status", cut.name(), "recovered", true), null);
+                        rows.finishStep(run.id(), st.stepId(), cut, st.attempts(), null, null,
+                                HttpStepExecutor.DEADLINE_EXCEEDED, "Run deadline passed while the node was down",
+                                false, seq);
+                        rows.stop(run.id(), DEADLINE, RUN_TIMEOUT, "Run deadline reached", null);
+                    } else if (idempotent) {
+                        rows.resetStep(run.id(), st.stepId());
+                    } else {
+                        long seq = recorder.record(run.id(), EventType.STEP_OUTCOME_UNKNOWN, ref,
+                                details("code", STEP_OUTCOME_UNKNOWN, "recovered", true), null);
+                        rows.finishStep(run.id(), st.stepId(), StepStatus.UNKNOWN, st.attempts(), null, null,
+                                STEP_OUTCOME_UNKNOWN, "Outcome lost with node " + previousOwner, false, seq);
+                        rows.stop(run.id(), "FAIL_RUN", STEP_OUTCOME_UNKNOWN,
+                                "Step " + st.stepId() + " may have run; resolve it before resuming", st.stepId());
+                        log.error("step outcome unknown – manual resolution required runId={} stepId={}", run.id(),
+                                st.stepId());
+                    }
+                }
+                return left;
+            });
+        } catch (LeaseLostException e) {
+            metrics.leaseLost();
+            return;
+        } catch (RuntimeException e) {
+            // lock failures were already retried; waking it again would only repeat the failure every sweep
+            log.error("recovery failed runId={}; released without a wake-up for an operator", lease.runId(), e);
+            try {
+                leases.release(lease, false);
+            } catch (RuntimeException releaseFailed) {
+                log.error("release failed runId={}", lease.runId(), releaseFailed);
+            }
+            return;
+        }
+        if (remaining == null) {
+            return;
+        }
+        if (remaining != Long.MAX_VALUE && remaining > 0) {
+            deadlines.schedule(lease.runId(), remaining, () -> deadlineReached(lease));
+        }
+        advance(lease);
+    }
+
+    /** The segment timer fired (US-5.1): persist the stop, then let {@code advance} cancel and finalize. */
+    void deadlineReached(Lease lease) {
+        try {
+            boolean stopped = Boolean.TRUE.equals(inTx(s -> {
+                leases.lockFenced(lease);
+                RunRows.Run run = rows.run(lease.runId()).orElseThrow();
+                if (run.status().terminal() || run.stopReason() != null) {
+                    return false;
+                }
+                rows.stop(run.id(), DEADLINE, RUN_TIMEOUT, "Run deadline reached", null);
+                return true;
+            }));
+            if (stopped) {
+                List<String> running = rows.steps(lease.runId()).stream()
+                        .filter(st -> st.status() == StepStatus.RUNNING).map(RunRows.Step::stepId).toList();
+                log.warn("segment deadline reached runId={} inFlight={}", lease.runId(), running);
+                advance(lease);
+            }
+        } catch (LeaseLostException e) {
+            metrics.leaseLost();
         }
     }
 
@@ -322,32 +595,123 @@ public class RunCoordinator {
         ObjectNode context = context(run);
         RunStatus finalStatus = status;
         try {
+            // AC6: evaluated over whatever data exists, also when the run failed
             JsonNode output = RunContext.output(pipeline, context, evaluator);
             rows.putContext(run.id(), "output", output.isMissingNode() ? context.objectNode() : output);
         } catch (ExpressionException e) {
-            rows.stop(run.id(), "FAIL_RUN", "OUTPUT_ERROR", e.getMessage(), null);
-            finalStatus = RunStatus.FAILED;
+            // AC7: no output; a completed run becomes COMPLETED_WITH_ERRORS, a failed one stays FAILED
+            log.warn("output expression failed code={}", e.code());
+            rows.recordError(run.id(), OUTPUT_EXPRESSION_ERROR, e.getMessage());
+            if (finalStatus == RunStatus.COMPLETED) {
+                finalStatus = RunStatus.COMPLETED_WITH_ERRORS;
+            }
         }
         EventType event = switch (finalStatus) {
             case COMPLETED -> EventType.RUN_COMPLETED;
             case COMPLETED_WITH_ERRORS -> EventType.RUN_COMPLETED_WITH_ERRORS;
+            case TIMED_OUT -> EventType.RUN_TIMED_OUT;
             default -> EventType.RUN_FAILED;
         };
         Map<String, Object> details = new HashMap<>();
         details.put("steps", stepCount);
+        if (finalStatus == RunStatus.TIMED_OUT) {
+            List<RunRows.Step> cut = rows.steps(run.id()).stream()
+                    .filter(st -> HttpStepExecutor.DEADLINE_EXCEEDED.equals(st.errorCode())).toList();
+            details.put("aborted", cut.stream().map(RunRows.Step::stepId).toList());
+            details.put("unknown", cut.stream().filter(st -> st.status() == StepStatus.UNKNOWN)
+                    .map(RunRows.Step::stepId).toList());
+            rows.deadlineAt(run.id()).ifPresent(at -> details.put("deadlineAt", at.toString()));
+        }
+        if (run.startedAt() != null) {
+            details.put("durationMs", java.time.Duration.between(run.startedAt(), Instant.now(clock)).toMillis());
+        }
         recorder.record(run.id(), event, null, details, null);
         rows.finishRun(run.id(), finalStatus);
+        exchanges.finalResult(run.id());
         java.util.UUID runId = run.id();
         RunStatus logged = finalStatus;
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
+                deadlines.cancel(runId);
                 log.info("run finished runId={} status={}", runId, logged);
                 metrics.runFinished(run.pipelineCode(), logged.name(), java.time.Duration.between(
                         run.startedAt() != null ? run.startedAt() : run.createdAt(), Instant.now(clock)));
                 notifier.notifyDone(runId);
             }
         });
+    }
+
+    /** US-7.6 AC4: corrupt or moved context is never used; the run fails with {@code CONTEXT_DECRYPTION_FAILED}. */
+    private void failUnreadable(Lease lease, ContextCipher.DecryptionException e) {
+        try {
+            inTx(s -> {
+                leases.lockFenced(lease);
+                RunRows.Run run = rows.run(lease.runId()).orElseThrow();
+                if (run.status().terminal()) {
+                    return null;
+                }
+                rows.stop(run.id(), "FAIL_RUN", ContextCipher.DecryptionException.CODE, e.getMessage(), null);
+                rows.steps(run.id()).stream().filter(st -> st.status() == StepStatus.PENDING)
+                        .forEach(st -> rows.cancelStep(run.id(), st.stepId()));
+                recorder.record(run.id(), EventType.RUN_FAILED, null,
+                        Map.of("code", ContextCipher.DecryptionException.CODE), null);
+                rows.finishRun(run.id(), RunStatus.FAILED);
+                exchanges.finalResult(run.id());
+                java.util.UUID runId = run.id();
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        deadlines.cancel(runId);
+                        notifier.notifyDone(runId);
+                    }
+                });
+                return null;
+            });
+        } catch (LeaseLostException lost) {
+            metrics.leaseLost();
+        }
+    }
+
+    /** The step's view: {@code input}, {@code run} and its ancestors' results only (US-4.4, the US-3.2 rule). */
+    private static ObjectNode snapshot(ObjectNode context, CompiledPipeline pipeline, CompiledStep step) {
+        ObjectNode view = context.deepCopy();
+        java.util.Set<String> ancestors = pipeline.ancestors(step.id());
+        ((ObjectNode) view.path("steps")).retain(ancestors);
+        return view;
+    }
+
+    /**
+     * One coordinator transaction, run again when SQL Server picks it as a deadlock victim or a lock wait times out.
+     * The transaction rolled back whole, so it is safe to repeat; it still starts with the fenced lock.
+     */
+    private <T> T inTx(org.springframework.transaction.support.TransactionCallback<T> work) {
+        for (int attempt = 1; ; attempt++) {
+            try {
+                return tx.execute(work);
+            } catch (org.springframework.dao.PessimisticLockingFailureException e) {
+                if (attempt >= LOCK_RETRIES) {
+                    throw e;
+                }
+                log.warn("transaction retried after {} attempt={}", e.getClass().getSimpleName(), attempt);
+                try {
+                    Thread.sleep(20L * attempt);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw e;
+                }
+            }
+        }
+    }
+
+    /** A transaction that keeps failing never strands a run: release it with a wake-up for recovery (US-5.5). */
+    private void releaseForRecovery(Lease lease, String what, RuntimeException e) {
+        log.error("{} failed runId={}; released for recovery", what, lease.runId(), e);
+        try {
+            leases.release(lease, true);
+        } catch (RuntimeException releaseFailed) {
+            log.error("release failed runId={}; the lease expires instead", lease.runId(), releaseFailed);
+        }
     }
 
     private ObjectNode context(RunRows.Run run) {

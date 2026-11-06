@@ -12,15 +12,17 @@ import com.crisil.apiorch.definition.CompiledStep;
  * US-4.6). Pure, so the coordinator, the dry run (US-3.5) and tests share one rule set:
  * <ul>
  *   <li>a pending step is <b>ready</b> when every dependency succeeded and the run is not stopping;</li>
- *   <li>a pending step is <b>skipped</b> when a dependency did not succeed ({@code DEPENDENCY_NOT_SUCCEEDED}), or
- *       when the run is stopping and the step never started ({@code RUN_STOPPED});</li>
- *   <li>at <b>quiescence</b> (nothing pending or running) the run ends: {@code FAILED} if a {@code FAIL_RUN} step
- *       failed, {@code COMPLETED_WITH_ERRORS} if any other step failed or was skipped, else {@code COMPLETED}.</li>
+ *   <li>a pending step is <b>skipped</b> when a dependency did not succeed ({@code DEPENDENCY_FAILED}), or
+ *       when the run is stopping and the step never started ({@code RUN_STOPPED}, stored as {@code CANCELLED});</li>
+ *   <li>the run is <b>stopping</b> when its persisted {@code stop_reason} is set, or a {@code FAIL_RUN} step
+ *       failed (README §5.1 rule 7);</li>
+ *   <li>at <b>quiescence</b> (nothing pending or running) the run ends: {@code FAILED} if it was stopping, {@code COMPLETED_WITH_ERRORS} if any other step failed or was skipped, else {@code COMPLETED}.</li>
  * </ul>
  */
 public final class RunDecision {
 
-    public record Skip(String stepId, String reason) {
+    /** {@code dependency}: the dependency that did not succeed, for {@code DEPENDENCY_FAILED}. */
+    public record Skip(String stepId, String reason, String dependency) {
     }
 
     /** {@code finalStatus} is set only at quiescence. */
@@ -35,7 +37,12 @@ public final class RunDecision {
     }
 
     public static Next decide(CompiledPipeline pipeline, Map<String, StepState> states) {
-        boolean stopping = states.values().stream().anyMatch(StepState::failedWithStop);
+        return decide(pipeline, states, false);
+    }
+
+    /** {@code stopRequested}: the run's {@code stop_reason} is set, so nothing new starts on any node (US-4.6 AC2). */
+    public static Next decide(CompiledPipeline pipeline, Map<String, StepState> states, boolean stopRequested) {
+        boolean stopping = stopRequested || states.values().stream().anyMatch(StepState::failedWithStop);
         List<CompiledStep> ready = new ArrayList<>();
         List<Skip> skip = new ArrayList<>();
         Map<String, StepStatus> effective = new java.util.HashMap<>();
@@ -46,7 +53,7 @@ public final class RunDecision {
                 continue;
             }
             CompiledStep step = pipeline.step(id);
-            boolean blocked = false;
+            String blocked = null;
             boolean waiting = false;
             for (String dep : step.dependsOn()) {
                 StepStatus depStatus = effective.get(dep);
@@ -54,16 +61,16 @@ public final class RunDecision {
                     continue;
                 }
                 if (depStatus.finished()) {
-                    blocked = true;
+                    blocked = blocked != null ? blocked : dep;
                 } else {
                     waiting = true;
                 }
             }
             if (stopping) {
-                skip.add(new Skip(id, "RUN_STOPPED"));
+                skip.add(new Skip(id, "RUN_STOPPED", null));
                 effective.put(id, StepStatus.SKIPPED);
-            } else if (blocked) {
-                skip.add(new Skip(id, "DEPENDENCY_NOT_SUCCEEDED"));
+            } else if (blocked != null) {
+                skip.add(new Skip(id, "DEPENDENCY_FAILED", blocked));
                 effective.put(id, StepStatus.SKIPPED);
             } else if (!waiting) {
                 ready.add(step);
@@ -76,6 +83,8 @@ public final class RunDecision {
             boolean anyNotSucceeded = effective.values().stream().anyMatch(s -> s != StepStatus.SUCCEEDED);
             finalStatus = stopping ? RunStatus.FAILED : anyNotSucceeded ? RunStatus.COMPLETED_WITH_ERRORS : RunStatus.COMPLETED;
         }
+        // AC3: submitted in list order, whatever the topological walk visited first
+        ready.sort(java.util.Comparator.comparingInt(CompiledStep::index));
         return new Next(List.copyOf(ready), List.copyOf(skip), finalStatus);
     }
 }

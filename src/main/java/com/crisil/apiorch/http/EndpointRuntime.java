@@ -1,7 +1,11 @@
 package com.crisil.apiorch.http;
 
 import java.net.http.HttpClient;
+import java.time.Duration;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 
 import com.crisil.apiorch.endpoint.EndpointConfig;
@@ -9,10 +13,19 @@ import com.crisil.apiorch.endpoint.EndpointConfig;
 /**
  * Everything needed to call one endpoint, built from its {@link EndpointConfig} (US-2.1): a {@link RestClient}
  * cloned from the shared builder so interceptors never leak between endpoints, and its JDK {@link HttpClient}.
- * US-5.1 to US-5.4 add the timeout buckets and Resilience4j instances. Replaced whole on every change; JDK 17's
- * {@code HttpClient} has no {@code close()}, so a replaced runtime is simply dropped.
+ * {@link #restClient(long)} gives a client per timeout bucket (US-5.1); US-5.2 to US-5.4 add the Resilience4j
+ * instances. Replaced whole on every change; JDK 17's {@code HttpClient} has no {@code close()}, so a replaced runtime
+ * is simply dropped.
  */
-public record EndpointRuntime(EndpointConfig config, RestClient restClient, HttpClient httpClient) {
+public record EndpointRuntime(EndpointConfig config, RestClient restClient, HttpClient httpClient,
+        Map<Long, RestClient> buckets) {
+
+    static final long BUCKET_MS = 250;
+    static final long MAX_BUCKET_MS = 120_000;
+
+    public EndpointRuntime(EndpointConfig config, RestClient restClient, HttpClient httpClient) {
+        this(config, restClient, httpClient, new ConcurrentHashMap<>());
+    }
 
     public String name() {
         return config.name();
@@ -20,5 +33,24 @@ public record EndpointRuntime(EndpointConfig config, RestClient restClient, Http
 
     public long version() {
         return config.version();
+    }
+
+    /** {@code timeoutMs} rounded up to 250 ms, at most 120 s, so few clients serve every attempt timeout. */
+    public static long bucket(long timeoutMs) {
+        long rounded = (Math.max(1, timeoutMs) + BUCKET_MS - 1) / BUCKET_MS * BUCKET_MS;
+        return Math.min(rounded, MAX_BUCKET_MS);
+    }
+
+    /**
+     * The endpoint's client with a read timeout of {@link #bucket}{@code (timeoutMs)}. {@code RestClient} has no
+     * per-request timeout, so each bucket shares the {@code HttpClient} through its own request factory; mutating
+     * keeps the interceptors (exchange recorder, auth).
+     */
+    public RestClient restClient(long timeoutMs) {
+        return buckets.computeIfAbsent(bucket(timeoutMs), b -> {
+            JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(httpClient);
+            factory.setReadTimeout(Duration.ofMillis(b));
+            return restClient.mutate().requestFactory(factory).build();
+        });
     }
 }

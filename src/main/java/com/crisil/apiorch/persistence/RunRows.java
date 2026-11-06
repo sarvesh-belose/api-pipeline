@@ -28,7 +28,7 @@ import com.crisil.apiorch.engine.StepStatus;
 /**
  * Row access for {@code pipeline_run}, {@code step_execution} and {@code run_context} (US-4.1), all through
  * {@code JdbcClient} (README §5.1 rule 2). Callers hold the run lock where the rules require it. Timestamps come
- * from {@code SYSUTCDATETIME()}. Context content is stored as UTF-8 JSON until US-7.6 encrypts it.
+ * from {@code SYSUTCDATETIME()}. Context content is encrypted with {@link ContextCipher} (US-7.6), bound to its run and entry key.
  */
 @Component
 public class RunRows {
@@ -49,20 +49,34 @@ public class RunRows {
     private final JdbcClient jdbc;
     private final ObjectMapper json;
 
-    public RunRows(JdbcClient jdbc, ObjectMapper json) {
+    private final ContextCipher cipher;
+
+    public RunRows(JdbcClient jdbc, ObjectMapper json, ContextCipher cipher) {
         this.jdbc = jdbc;
         this.json = json;
+        this.cipher = cipher;
     }
 
     /** README §5.1 rule 6: the run is created owned by this node, at epoch 1. */
     public void insertRun(UUID id, String code, int version, String mode, String correlationId, String createdBy,
             String owner, long leaseMs) {
+        insertRun(id, code, version, mode, correlationId, createdBy, owner, leaseMs, null, null);
+    }
+
+    /**
+     * As above, with the caller's {@code Idempotency-Key} and the input hash (US-4.7).
+     *
+     * @throws org.springframework.dao.DataIntegrityViolationException when the key is already used
+     */
+    public void insertRun(UUID id, String code, int version, String mode, String correlationId, String createdBy,
+            String owner, long leaseMs, String idempotencyKey, String requestHash) {
         jdbc.sql("""
                 INSERT INTO pipeline_run (id, pipeline_code, pipeline_version, status, mode, correlation_id, created_by,
-                                          created_at, owner_instance, lease_epoch, lease_until)
+                                          created_at, owner_instance, lease_epoch, lease_until, idempotency_key,
+                                          request_hash)
                 VALUES (:id, :code, :version, 'ACCEPTED', :mode, :cid, :by, SYSUTCDATETIME(), :owner, 1,
-                        DATEADD(MILLISECOND, :leaseMs, SYSUTCDATETIME()))""")
-                .param("id", id).param("code", code).param("version", version).param("mode", mode)
+                        DATEADD(MILLISECOND, :leaseMs, SYSUTCDATETIME()), :key, :hash)""")
+                .param("key", idempotencyKey).param("hash", requestHash).param("id", id).param("code", code).param("version", version).param("mode", mode)
                 .param("cid", correlationId).param("by", createdBy).param("owner", owner).param("leaseMs", leaseMs)
                 .update();
     }
@@ -75,21 +89,36 @@ public class RunRows {
     }
 
     public void putContext(UUID runId, String key, JsonNode value) {
-        byte[] content = write(value);
-        int updated = jdbc.sql("UPDATE run_context SET content = :c, updated_at = SYSUTCDATETIME() "
+        String stored = cipher.encrypt(runId, key, write(value));
+        byte[] content = stored.getBytes(StandardCharsets.UTF_8);
+        String kid = ContextCipher.kidOf(stored);
+        int updated = jdbc.sql("UPDATE run_context SET content = :c, key_id = :kid, updated_at = SYSUTCDATETIME() "
                 + "WHERE run_id = :run AND entry_key = :key")
-                .param("c", content).param("run", runId).param("key", key).update();
+                .param("c", content).param("kid", kid).param("run", runId).param("key", key).update();
         if (updated == 0) {
-            jdbc.sql("INSERT INTO run_context (run_id, entry_key, content) VALUES (:run, :key, :c)")
-                    .param("run", runId).param("key", key).param("c", content).update();
+            jdbc.sql("INSERT INTO run_context (run_id, entry_key, content, key_id) VALUES (:run, :key, :c, :kid)")
+                    .param("run", runId).param("key", key).param("c", content).param("kid", kid).update();
         }
     }
 
+    /** @throws ContextCipher.DecryptionException when an entry was tampered with or moved (US-7.6 AC4) */
     public Map<String, JsonNode> context(UUID runId) {
         Map<String, JsonNode> out = new LinkedHashMap<>();
         jdbc.sql("SELECT entry_key, content FROM run_context WHERE run_id = :run").param("run", runId)
                 .query((ResultSet rs) -> {
-                    out.put(rs.getString("entry_key"), read(rs.getBytes("content")));
+                    String key = rs.getString("entry_key");
+                    String stored = new String(rs.getBytes("content"), StandardCharsets.UTF_8);
+                    out.put(key, read(cipher.decrypt(runId, key, stored)));
+                });
+        return out;
+    }
+
+    /** Rows per key id, for the rotation report at startup (US-7.6 AC3); {@code null} is plain. */
+    public Map<String, Long> contextRowsByKid() {
+        Map<String, Long> out = new LinkedHashMap<>();
+        jdbc.sql("SELECT key_id, COUNT(*) AS n FROM run_context GROUP BY key_id")
+                .query((ResultSet rs) -> {
+                    out.put(rs.getString("key_id"), rs.getLong("n"));
                 });
         return out;
     }
@@ -101,6 +130,17 @@ public class RunRows {
     public List<Step> steps(UUID runId) {
         return jdbc.sql("SELECT * FROM step_execution WHERE run_id = :run").param("run", runId)
                 .query(RunRows::mapStep).list();
+    }
+
+    /** Milliseconds left in the run's segment, by database time; negative once past (US-5.1). */
+    public Optional<Long> remainingMs(UUID runId) {
+        return jdbc.sql("SELECT DATEDIFF(MILLISECOND, SYSUTCDATETIME(), deadline_at) FROM pipeline_run "
+                + "WHERE id = :id AND deadline_at IS NOT NULL").param("id", runId).query(Long.class).optional();
+    }
+
+    public Optional<Instant> deadlineAt(UUID runId) {
+        return jdbc.sql("SELECT deadline_at FROM pipeline_run WHERE id = :id AND deadline_at IS NOT NULL")
+                .param("id", runId).query((rs, i) -> instant(rs, "deadline_at")).optional();
     }
 
     /** {@code RUNNING} with the segment deadline from database time (US-5.1 enforces it). */
@@ -130,6 +170,13 @@ public class RunRows {
                 .param("run", runId).param("step", stepId).update();
     }
 
+    /** A step found {@code RUNNING} by recovery that is safe to send again (US-5.5): back to {@code PENDING}. */
+    public void resetStep(UUID runId, String stepId) {
+        jdbc.sql("UPDATE step_execution SET status = 'PENDING', started_at = NULL, row_version = row_version + 1 "
+                + "WHERE run_id = :run AND step_id = :step AND status = 'RUNNING'")
+                .param("run", runId).param("step", stepId).update();
+    }
+
     public void skipStep(UUID runId, String stepId, String reason) {
         jdbc.sql("UPDATE step_execution SET status = 'SKIPPED', skip_reason = :reason, ended_at = SYSUTCDATETIME(), "
                 + "row_version = row_version + 1 WHERE run_id = :run AND step_id = :step AND status = 'PENDING'")
@@ -152,6 +199,11 @@ public class RunRows {
                 WHERE id = :id""")
                 .param("reason", reason).param("code", errorCode).param("msg", truncate(errorMessage))
                 .param("step", errorStepId).param("id", runId).update();
+    }
+
+    /** A run-level error that does not stop the run (US-4.6 AC7); an earlier error is kept. */
+    public void recordError(UUID runId, String errorCode, String errorMessage) {
+        stop(runId, null, errorCode, errorMessage, null);
     }
 
     /** Ends the run and gives up its lease. */
@@ -179,17 +231,17 @@ public class RunRows {
         return message == null || message.length() <= 2000 ? message : message.substring(0, 2000);
     }
 
-    private byte[] write(JsonNode value) {
+    private String write(JsonNode value) {
         try {
-            return json.writeValueAsBytes(value);
+            return json.writeValueAsString(value);
         } catch (JsonProcessingException e) {
             throw new IllegalArgumentException("Context value is not serialisable", e);
         }
     }
 
-    private JsonNode read(byte[] content) {
+    private JsonNode read(String content) {
         try {
-            return json.readTree(new String(content, StandardCharsets.UTF_8));
+            return json.readTree(content);
         } catch (IOException e) {
             throw new IllegalStateException("Stored context is not readable", e);
         }

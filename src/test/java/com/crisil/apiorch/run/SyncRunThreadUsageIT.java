@@ -33,10 +33,13 @@ import testsupport.security.TestJwt;
 
 /**
  * US-4.1 AC8: with 10 Tomcat threads, 200 concurrent sync callers whose step takes 2 s all get 200 within 6 s.
- * Holding a request thread while waiting would need at least 40 s.
+ * Holding a request thread while waiting would need at least 40 s. The accept backlog is raised above the default
+ * 100 so 200 simultaneous connects are not refused by the OS before Tomcat accepts them; the thread limit is what
+ * the test is about.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
-        "server.tomcat.threads.max=10", "apiorch.executor.step-io.size=220", "spring.datasource.hikari.maximum-pool-size=20"})
+        "server.tomcat.threads.max=10", "server.tomcat.accept-count=300", "apiorch.executor.step-io.size=220",
+        "spring.datasource.hikari.maximum-pool-size=20"})
 @ActiveProfiles("test")
 @Import(StubExecutorConfig.class)
 class SyncRunThreadUsageIT {

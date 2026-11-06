@@ -85,6 +85,19 @@ public class JdbcRunLeaseService implements RunLeaseService {
         }
     }
 
+    /**
+     * Locks the run row without a lease, for writers that don't own the run (the caller exchange, US-7.7), so their
+     * events still take the next {@code seq} in order (README §5.1 rule 1).
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void lockUnowned(UUID runId) {
+        dialect.sessionLockTimeoutSql(lockTimeoutMs).ifPresent(sql -> jdbc.sql(sql).update());
+        String sql = dialect.withLockTimeout(dialect.lockingSelect("id", "pipeline_run", "id = :id"), lockTimeoutMs);
+        if (jdbc.sql(sql).param("id", runId).query(UUID.class).list().isEmpty()) {
+            throw new IllegalStateException("Run " + runId + " does not exist");
+        }
+    }
+
     @Override
     @Transactional
     public Set<UUID> renewAll() {
