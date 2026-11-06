@@ -134,8 +134,17 @@ public class SecurityConfig {
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS));
     }
 
-    /** {@code local} dev mode: every request is {@code dev-user} with all three roles (AC7). */
+    /**
+     * {@code local} dev mode: every request is {@code dev-user} with all three roles (AC7), on every dispatch. A sync
+     * run answers on an async dispatch (US-4.1), which {@code OncePerRequestFilter} skips by default; without it the
+     * run was executed but the caller got {@code 401}.
+     */
     static final class DevUserFilter extends OncePerRequestFilter {
+
+        @Override
+        protected boolean shouldNotFilterAsyncDispatch() {
+            return false;
+        }
 
         @Override
         protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)

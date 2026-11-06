@@ -14,7 +14,10 @@ import com.crisil.apiorch.ApiorchApplication;
 import testsupport.web.EndpointJson;
 import testsupport.web.Http;
 
-/** US-1.2 AC7: the {@code local} profile starts in dev mode, and every request is {@code dev-user} with all roles. */
+/**
+ * US-1.2 AC7: the {@code local} profile starts in dev mode, and every request is {@code dev-user} with all roles,
+ * including the async dispatch that answers a sync run.
+ */
 class LocalDevModeIT {
 
     @Test
@@ -30,6 +33,12 @@ class LocalDevModeIT {
             assertThat(res.statusCode()).as(res.body()).isEqualTo(201);
             assertThat(res.body()).contains("\"createdBy\":\"dev-user\"");
             assertThat(http.get("/v3/api-docs").statusCode()).isEqualTo(200);
+
+            // a sync run answers on an async dispatch, which must still be dev-user (found running the demo); the
+            // seeded pipeline's WireMock is not running here, so the run fails, but the caller gets its 200
+            HttpResponse<String> run = http.postJson("/api/v1/pipelines/DEMO_ONBOARD/runs?mode=sync", "{\"name\":\"x\"}");
+            assertThat(run.statusCode()).as(run.body()).isEqualTo(200);
+            assertThat(run.body()).contains("\"status\":\"FAILED\"");
         }
     }
 }
