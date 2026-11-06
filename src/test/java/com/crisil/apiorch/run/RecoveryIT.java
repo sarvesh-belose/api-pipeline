@@ -42,7 +42,9 @@ import testsupport.web.Http;
  * concurrent sweep and shutdown tests follow with {@code ClusterTestSupport}.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
-        "apiorch.recovery.sweep-interval-ms=300", "apiorch.lease.renew-interval-ms=300"})
+        "apiorch.recovery.sweep-interval-ms=300", "apiorch.lease.renew-interval-ms=300",
+        // its own database: orphans here must be found by this context's sweeper only
+        "spring.datasource.url=jdbc:h2:mem:recovery-it;MODE=MSSQLServer;DATABASE_TO_UPPER=FALSE;CASE_INSENSITIVE_IDENTIFIERS=TRUE;DB_CLOSE_DELAY=-1"})
 @ActiveProfiles("test")
 class RecoveryIT {
 

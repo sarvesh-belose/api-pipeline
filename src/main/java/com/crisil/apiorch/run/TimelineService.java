@@ -46,10 +46,38 @@ public class TimelineService {
 
     static final int MAX_PAGE_SIZE = 100;
 
+    /**
+     * The partitioned reads, each bounded on its table's partitioning column ({@code :from}/{@code :to} from the
+     * run's lifetime) plus the dialect's explicit partition range, so SQL Server reads only the partitions the run
+     * can be in (checked by {@code TimelinePartitionEliminationIT}).
+     */
+    String attemptsSql() {
+        return """
+                SELECT event_seq, kind, step_id, exec_no, attempt_no, endpoint_name, method, url, started_at,
+                       duration_ms, request_bytes, response_bytes, response_status, outcome, circuit_state
+                FROM step_attempt WHERE run_id = :id AND started_at >= :from AND started_at < :to"""
+                + dialect.partitionRange("started_at");
+    }
+
+    String exchangesSql() {
+        return """
+                SELECT event_seq, kind, occurred_at, http_status, bytes, final FROM run_exchange
+                WHERE run_id = :id AND occurred_at >= :from AND occurred_at < :to"""
+                + dialect.partitionRange("occurred_at");
+    }
+
+    String eventsSql() {
+        return """
+                SELECT seq, event_type, step_id, exec_no, attempt, occurred_at, details, actor FROM run_event
+                WHERE run_id = :id AND occurred_at >= :from AND occurred_at < :to"""
+                + dialect.partitionRange("occurred_at") + " ORDER BY seq";
+    }
+
     private record Window(UUID id, Instant from, Instant to) {
     }
 
     private final JdbcClient jdbc;
+    private final com.crisil.apiorch.persistence.SqlDialect dialect;
     private final ObjectMapper json;
     private final ActivityRecorder recorder;
     private final JdbcRunLeaseService leases;
@@ -57,7 +85,8 @@ public class TimelineService {
     private final java.time.Clock clock;
 
     public TimelineService(JdbcClient jdbc, ObjectMapper json, ActivityRecorder recorder, JdbcRunLeaseService leases,
-            TransactionTemplate tx, java.time.Clock clock) {
+            TransactionTemplate tx, java.time.Clock clock, com.crisil.apiorch.persistence.SqlDialect dialect) {
+        this.dialect = dialect;
         this.clock = clock;
         this.jdbc = jdbc;
         this.json = json;
@@ -91,10 +120,7 @@ public class TimelineService {
                                 : "NOT_REQUIRED")).list();
 
         List<Timeline.Call> calls = new ArrayList<>();
-        jdbc.sql("""
-                SELECT event_seq, kind, step_id, exec_no, attempt_no, endpoint_name, method, url, started_at,
-                       duration_ms, request_bytes, response_bytes, response_status, outcome, circuit_state
-                FROM step_attempt WHERE run_id = :id AND started_at >= :from AND started_at < :to""")
+        jdbc.sql(attemptsSql())
                 .param("id", id).param("from", ts(w.from())).param("to", ts(w.to()))
                 .query((ResultSet rs) -> {
                     calls.add(new Timeline.Call(longOrNull(rs, "event_seq"), rs.getString("kind"), null,
@@ -105,9 +131,7 @@ public class TimelineService {
                             intOrNull(rs, "response_status"), rs.getString("outcome"), rs.getString("circuit_state"),
                             null, null));
                 });
-        jdbc.sql("""
-                SELECT event_seq, kind, occurred_at, http_status, bytes, final FROM run_exchange
-                WHERE run_id = :id AND occurred_at >= :from AND occurred_at < :to""")
+        jdbc.sql(exchangesSql())
                 .param("id", id).param("from", ts(w.from())).param("to", ts(w.to()))
                 .query((ResultSet rs) -> {
                     boolean response = rs.getString("kind").equals("CALLER_RESPONSE");
@@ -120,9 +144,7 @@ public class TimelineService {
 
         List<Timeline.Event> events = null;
         if (withEvents) {
-            events = jdbc.sql("""
-                    SELECT seq, event_type, step_id, exec_no, attempt, occurred_at, details, actor FROM run_event
-                    WHERE run_id = :id AND occurred_at >= :from AND occurred_at < :to ORDER BY seq""")
+            events = jdbc.sql(eventsSql())
                     .param("id", id).param("from", ts(w.from())).param("to", ts(w.to()))
                     .query((rs, i) -> new Timeline.Event(rs.getLong("seq"), rs.getString("event_type"),
                             rs.getString("step_id"), intOrNull(rs, "exec_no"), intOrNull(rs, "attempt"),
@@ -288,8 +310,17 @@ public class TimelineService {
         return caller.getAuthorities().stream().anyMatch(a -> a.getAuthority().equals("ROLE_" + Roles.OPS));
     }
 
-    private static Timestamp ts(Instant i) {
-        return Timestamp.valueOf(i.atOffset(ZoneOffset.UTC).toLocalDateTime());
+    private static Object ts(Instant i) {
+        return bound(i);
+    }
+
+    /**
+     * A time bound as a {@code LocalDateTime} (UTC), which mssql-jdbc sends as {@code datetime2}. A
+     * {@code java.sql.Timestamp} goes as {@code datetime}, and SQL Server then reads every partition instead of
+     * eliminating them (found by {@code TimelinePartitionEliminationIT}).
+     */
+    static java.time.LocalDateTime bound(Instant i) {
+        return i.atOffset(ZoneOffset.UTC).toLocalDateTime();
     }
 
     private static Instant instant(Object value) {

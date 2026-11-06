@@ -290,6 +290,12 @@ gave up before anything was sent. `persistence.LockRetry` now repeats a whole tr
 lock wait timeout (1222, H2 50200), in the coordinator and for `REQUEST_SENT`; a database error that still escapes
 the executor releases the run for recovery instead of failing it.
 
+**Note (US-5.5 test isolation):** every cached test context shares the test database, so with a sweeper in each,
+one context claimed runs another test was watching and drove them with its own step executor. The `test` profile
+now sets `apiorch.recovery.sweep-interval-ms` to one hour; the recovery tests switch it on and use their own H2
+database (`RecoveryIT`, `ResilienceMetricsIT`) or their own cluster. On the shared SQL Server container other slow
+contexts may still win a claim, so the concurrent-sweep test checks "once each", not which node won.
+
 **Note (Sprint 5 tests):** the US-1.1 `GracefulShutdownIT` now waits until its slow request is inside the
 controller before closing the context, instead of a fixed 400 ms sleep that a loaded machine could miss.
 `RetryNoThreadBlockingIT` gives its endpoint a wide circuit window, because 20 failing runs would otherwise open the

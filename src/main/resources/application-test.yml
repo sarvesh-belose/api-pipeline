@@ -13,6 +13,10 @@ apiorch:
     allowed-hosts: [localhost, "*.example.com"]
   run:
     allow-version-override: true
+  # Every cached test context shares the test database, so a sweeper in each would claim runs other tests are
+  # watching. Recovery tests switch it on (and use their own database or cluster); production keeps 15 s (US-5.5).
+  recovery:
+    sweep-interval-ms: 3600000
   context:
     # a fixed, test-only key under src/test/resources (US-7.6); never a production key
     encryption-keys:
